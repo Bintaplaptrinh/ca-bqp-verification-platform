@@ -18,7 +18,7 @@ curl http://127.0.0.1:8000/health  # expect {"status": "ok", "service": "ca-bqp-
 docker compose down                # stop and remove containers/network
 ```
 
-`backend` only starts once `postgres` and `redis` report healthy (`condition: service_healthy` in `compose.yaml`).
+`backend` only starts once `postgres` and `redis` report healthy (`condition: service_healthy` in `compose.yaml`). The same lifecycle is wrapped in the `Makefile` at the repo root: `make up`, `make down`, `make logs`, `make config`, `make test` (runs `pytest` inside the running `backend` container, so the stack must already be up).
 
 ### Backend, without Docker
 
@@ -27,13 +27,16 @@ All commands run from `apps/backend/`, using a local virtualenv:
 ```bash
 # from apps/backend/
 python -m venv .venv
-./.venv/Scripts/pip install -e ".[dev]"      # or: pip install fastapi "uvicorn[standard]" pytest httpx
+./.venv/Scripts/pip install -e ".[dev]"      # or: pip install fastapi "uvicorn[standard]" pytest httpx ruff
 ./.venv/Scripts/python -m pytest             # run all tests (pythonpath=src is set in pyproject.toml)
 ./.venv/Scripts/python -m pytest -v tests/test_health.py::test_health_returns_ok   # run a single test
+./.venv/Scripts/python -m ruff check .       # lint (same check CI runs)
 ./.venv/Scripts/python -m uvicorn --app-dir src cabqp.main:app --reload --port 8000  # run the dev server
 ```
 
-No Makefile or CI exists yet — don't assume `make ...` or a GitHub Actions workflow will work until those are actually added.
+### CI
+
+`.github/workflows/ci.yml` runs on PRs/pushes to `main`/`develop` with two jobs: `backend` (install `.[dev]`, `ruff check .`, `pytest`, all from `apps/backend/`) and `docker` (`docker compose config -q`, `docker compose build`). Match these locally before pushing.
 
 ## Architecture
 
