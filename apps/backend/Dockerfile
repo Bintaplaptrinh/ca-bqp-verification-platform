@@ -5,9 +5,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src
 
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
-
-ENV PYTHONPATH=/app/src
+RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
