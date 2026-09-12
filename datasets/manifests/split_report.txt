@@ -1,0 +1,41 @@
+=== DATASET SPLIT REPORT v2 (2018 - 2026) ===
+Thoi gian    : 2026-09-12 17:04:11
+Schema       : Synthetic v2 (bio_tags, UNIT_CODE entity)
+Canonical units: 1,633
+Synthetic recs : 32,660
+Hard cases     : 16
+
+Chi tiet tap:
+  Train: 22,860 records (70.0%) | 1143 units
+  Val  :  4,900 records (15.0%) | 245 units
+  Test :  4,900 records (15.0%) | 245 units
+
+Zero Leakage : PASS
+
+NER Stats (toan bo dataset):
+  UNIT_NAME  : 32,660 / 32,660 (100.00%)
+  UNIT_CODE  : 8,165 / 32,660 (25.00%)
+  PERSON_NAME: 29,229 / 32,660 (89.49%)
+  bio_tags   : 32,660 / 32,660 (100.00%)
+
+NER Quality Gates:
+  UNIT_NAME missing rate : 0.00% (threshold <= 1%)
+  UNIT_CODE coverage     : 25.00% (threshold >= 20%)
+  bio_tags rate          : 100.00% (threshold = 100%)
+  Schema valid           : True
+  NER gates status       : PASS
+
+Test -- Phan bo khoi:
+  BCA: 2220
+  BQP: 420
+  OTHER: 2260
+
+Test -- Phan bo template:
+  decision: 980
+  free_text: 735
+  letter: 735
+  ocr_table: 735
+  profile: 980
+  table_row: 735
+
+Test -- UNIT_CODE tagged: 1,225 / 4,900 (25.0%)
