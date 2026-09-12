@@ -1,5 +1,5 @@
 """
-Clear.py : Làm sạch & Chuẩn hóa (2018 – 2026)
+Làm sạch & Chuẩn hóa [2018 – 2026]
 =======================================================
 
 Input:  data_raw/raw_ALL_2018_2026.csv  (hoặc raw_2018.csv … raw_2026.csv)
@@ -12,7 +12,6 @@ Output:
 """
 import sys
 import os
-# Project root = 2 levels up (pipelines/xxx/ -> pipelines/ -> root)
 import pathlib as _pathlib
 _PROJECT_ROOT = str(_pathlib.Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
@@ -50,7 +49,7 @@ CHAR_MAP = str.maketrans({
     "\u201c": '"',  "\u201d": '"',   # nháy kép
     "\u2013": "-",  "\u2014": "-",   # gạch nối dài
     "\xa0":   " ",                   # non-breaking space
-    "\u200b": "",                    # ★ FIX #4: Zero-Width Space — loại bỏ hoàn toàn
+    "\u200b": "",                    # Zero-Width Space — loại bỏ hoàn toàn
     "\u200c": "",                    # Zero-Width Non-Joiner
     "\u200d": "",                    # Zero-Width Joiner
     "\ufeff": "",                    # BOM
@@ -75,7 +74,7 @@ LOWERCASE_PARTICLES = frozenset([
 
 def smart_title_case(text: str) -> str:
     """
-    Chuyển chuỗi ALL CAPS về dạng Title-case thông minh cho tiếng Việt.
+    Chuyển chuỗi ALL CAPS về dạng Title-case cho tiếng Việt.
     - Từ đầu câu/từ quan trọng: viết hoa chữ đầu.
     - Các hư từ (và, của, tại, về…): giữ lowercase nếu không đứng đầu cụm.
     - Từ viết tắt kỹ thuật (BCA, PC08, UBND): GIỮ NGUYÊN.
@@ -129,13 +128,13 @@ def normalize_name(name: str) -> str:
     1. Loại ký tự tàng hình (ZWS, BOM) và typography
     2. NFC Unicode
     3. Thu gọn khoảng trắng
-    4. Chuẩn hóa khoảng trắng quanh dấu - và /  (FIX #4)
+    4. Chuẩn hóa khoảng trắng quanh dấu - và /
     5. Bỏ dấu câu cuối dòng
-    6. Smart Title-case nếu toàn ALL CAPS  (FIX #3)
+    6. Smart Title-case nếu toàn ALL CAPS
     """
     if not name:
         return ""
-    # Bước 1: ánh xạ ký tự đặc biệt (gồm Zero-Width Space)
+    # Bước 1: ánh xạ ký tự đặc biệt (gồm Zero-Width Space) 
     name = name.translate(CHAR_MAP)
     # Bước 2: NFC
     name = unicodedata.normalize("NFC", name.strip())
@@ -155,7 +154,7 @@ def normalize_name(name: str) -> str:
 
 def normalize_for_dedup(name: str) -> str:
     """
-    Phiên bản chuẩn hóa chỉ dùng để so sánh trùng lặp:
+    Chuẩn hóa chỉ dùng để so sánh trùng lặp:
     lowercase + bỏ dấu + bỏ stop word + chỉ giữ chữ cái/số.
     """
     name = normalize_name(name).lower()
@@ -189,7 +188,7 @@ def assign_unit_code(record: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 2.3 — DEDUPLICATION (FIX #1 — Khóa dedup chỉ là dedup_key)
+# 2.3 — DEDUPLICATION (Khóa dedup chỉ là dedup_key)
 # ═══════════════════════════════════════════════════════════════════════
 
 def deduplicate(
@@ -228,7 +227,7 @@ def deduplicate(
             existing["year_end"]   = max(
                 existing.get("year_end",   record_year), record_year)
 
-            # ★ FIX #1: Kiểm tra xung đột org_type
+            # Kiểm tra xung đột org_type
             r_ot  = r.get("organization_type", "OTHER")
             ex_ot = existing.get("organization_type", "OTHER")
             if r_ot != ex_ot:
@@ -367,7 +366,7 @@ def main() -> list[dict]:
 
     print(f"[Normalize] {len(processed):,d} records đã chuẩn hóa (incl. ALL CAPS, ZWS, dấu)")
 
-    # Dedup theo dedup_key (FIX #1)
+    # Dedup theo dedup_key
     unique, dups, conflicts = deduplicate(processed)
     print(f"[Dedup]     {len(unique):,d} unique | {len(dups):,d} trùng | {len(conflicts):,d} xung đột org_type")
 
@@ -378,7 +377,7 @@ def main() -> list[dict]:
     if len(warnings) > 10:
         print(f"  ... và {len(warnings) - 10} cảnh báo khác.")
     if not warnings:
-        print("  ✓ Dữ liệu sạch, không phát hiện lỗi cấu trúc")
+        print("  Dữ liệu sạch, không phát hiện lỗi cấu trúc")
 
     # Chuẩn bị cột đầu ra
     out_fields = [

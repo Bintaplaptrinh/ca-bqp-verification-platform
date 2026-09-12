@@ -9,8 +9,6 @@ import os
 import sys
 import pathlib as _pathlib
 from datetime import datetime
-
-# Project root = 2 levels up (pipelines/registry_ingestion/ -> pipelines/ -> root)
 _PROJECT_ROOT = str(_pathlib.Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -138,7 +136,6 @@ DISTRICTS_SAMPLE: list[tuple[str, list[tuple[str, str]]]] = [
 ]
 
 # ── Phòng nghiệp vụ Công an tỉnh/thành ────────────────────────────────────
-# Cải thiện v2: bổ sung PC07 (PCCC & CNCH) tham khảo Grok.py
 BCA_DEPT_PROV: list[tuple[str, str]] = [
     ("PC01", "Văn phòng Cơ quan Cảnh sát điều tra"),
     ("PC02", "Phòng Cảnh sát hình sự"),
@@ -154,7 +151,6 @@ BCA_DEPT_PROV: list[tuple[str, str]] = [
 ]
 
 # ── Sở ngành dân sự ────────────────────────────────────────────────────────
-# Cải thiện v3: bổ sung 7 sở còn thiếu so với Grok.py
 CIVIL_DEPTS: list[tuple[str, str]] = [
     ("SYT",    "Sở Y tế"),
     ("SGD",    "Sở Giáo dục và Đào tạo"),
@@ -192,7 +188,6 @@ def _source_url(year: int) -> str:
 def infer_unit_level(name: str, org_type: str, province_code: str = "") -> str:
     """
     Phỏng đoán cấp đơn vị từ tên + mã tỉnh.
-    v2 (cải thiện từ Grok.py): trả về chuỗi chuẩn quốc tế thay vì chuỗi tiếng Việt.
       ministry / central / province / district / commune / department
       division / brigade / regiment / corps / school / hospital / other
     PROVINCES được dùng để nhận diện cấp tỉnh ngay cả khi tên không chứa
@@ -293,7 +288,6 @@ def build_records_for_year(year: int) -> list[dict]:
     # ── A. KHỐI BỘ CÔNG AN (BCA) ────────────────────────────────────────────
 
     # Cục nghiệp vụ trực thuộc Bộ
-    # Cải thiện v2: bổ sung C07 (PCCC), A01/A02/A03 (An ninh điều tra) từ Grok.py
     bca_bo_units = [
         ("BCA_C01", "Văn phòng Cơ quan Cảnh sát điều tra Bộ Công an"),
         ("BCA_C02", "Cục Cảnh sát hình sự"),
@@ -326,7 +320,7 @@ def build_records_for_year(year: int) -> list[dict]:
         ca_code = f"BCA_CA_{p_code}"
 
         # Tên đơn vị cấp tỉnh — lưu ý: một số tỉnh dùng "Thành phố", một số dùng "Tỉnh"
-        # Cải thiện v3: TTH (Thừa Thiên Huế) → "Thành phố Huế" từ 2025
+        # TTH (Thừa Thiên Huế) → "Thành phố Huế" từ 2025 (theo nghị quyết 931)
         city_provinces = {"HN", "HCM", "DN", "HP", "CT"}
         if year >= 2025:
             city_provinces = city_provinces | {"TTH"}   # TP Huế TW từ 1/7/2025
@@ -370,7 +364,7 @@ def build_records_for_year(year: int) -> list[dict]:
             "Công an Thành phố Thủ Đức - Thành phố Hồ Chí Minh",
             "BCA", _ref("nq_1111", year), province_code="HCM")
 
-    # Cải thiện v2: Thừa Thiên Huế → TP Huế (TP TW từ 1/7/2025)
+    # Thừa Thiên Huế → TP Huế (TP TW từ 1/7/2025)
     if year >= 2025:
         add("BCA_CA_HUE",
             "Công an Thành phố Huế",
@@ -385,7 +379,7 @@ def build_records_for_year(year: int) -> list[dict]:
             if is_legacy:
                 continue
             ca_code = f"BCA_CA_{p_code}"
-            # Cải thiện v3: TTH cũng là TP từ 2026 (vẫn là TP TW)
+            # TTH cũng là TP từ 2026 (vẫn là TP TW)
             city_prov_2026 = {"HN", "HCM", "DN", "HP", "CT", "TTH"}
             ca_name = (
                 f"Công an Thành phố {p_name}"
@@ -417,7 +411,6 @@ def build_records_for_year(year: int) -> list[dict]:
     add("BQP_BTL_TDHN",  "Bộ Tư lệnh Thủ đô Hà Nội",             "BQP", _ref("catalog", year))
     add("BQP_BTL_BDBP",  "Bộ Tư lệnh Bộ đội Biên phòng",          "BQP", _ref("catalog", year))
     add("BQP_BTL_CSB",   "Bộ Tư lệnh Cảnh sát biển Việt Nam",     "BQP", _ref("catalog", year))
-    # Cải thiện v3: bổ sung Quân chủng Hải quân + PK-KQ từ Grok.py
     add("BQP_HQ",        "Quân chủng Hải quân",                    "BQP", _ref("catalog", year))
     add("BQP_PKKQ",      "Quân chủng Phòng không - Không quân",    "BQP", _ref("catalog", year))
 
@@ -432,8 +425,7 @@ def build_records_for_year(year: int) -> list[dict]:
     add("BQP_QD4", "Quân đoàn 4 (Binh đoàn Cửu Long)",   "BQP", _ref("catalog", year))
 
     # Sư đoàn / Trung đoàn
-    # Cải thiện v2: tên đơn vị chuẩn (không gắn tên quân đoàn cha vào tên),
-    # nhất quán với alias trong Grok.py. Thêm F320, F330, F9 còn thiếu.
+    # Tên đơn vị chuẩn (không gắn tên quân đoàn cha vào tên),
     add("BQP_F308", "Sư đoàn 308", "BQP", _ref("catalog", year))
     add("BQP_F312", "Sư đoàn 312", "BQP", _ref("catalog", year))
     add("BQP_F320", "Sư đoàn 320", "BQP", _ref("catalog", year))
@@ -442,7 +434,6 @@ def build_records_for_year(year: int) -> list[dict]:
     add("BQP_E141", "Trung đoàn 141", "BQP", _ref("catalog", year))
 
     # Học viện / Bệnh viện Quân đội
-    # Cải thiện v2: bổ sung BV105, BV354 từ Grok.py
     add("BQP_HVQP",   "Học viện Quốc phòng",              "BQP", _ref("catalog", year))
     add("BQP_HVKTQS", "Học viện Kỹ thuật Quân sự",        "BQP", _ref("catalog", year))
     add("BQP_HVQY",   "Học viện Quân y",                   "BQP", _ref("catalog", year))
@@ -482,7 +473,7 @@ def build_records_for_year(year: int) -> list[dict]:
             "Ban Chỉ huy Quân sự Thành phố Thủ Đức - Thành phố Hồ Chí Minh",
             "BQP", _ref("nq_1111", year), province_code="HCM")
 
-    # Cải thiện v2: Bộ Chỉ huy QS Thành phố Huế từ 2025
+    # Bộ Chỉ huy QS Thành phố Huế từ 2025
     if year >= 2025:
         add("BQP_BCH_HUE",
             "Bộ Chỉ huy Quân sự Thành phố Huế",
@@ -529,7 +520,7 @@ def build_records_for_year(year: int) -> list[dict]:
             "Ủy ban nhân dân Thành phố Thủ Đức - Thành phố Hồ Chí Minh",
             "OTHER", _ref("nq_1111", year))
 
-    # Cải thiện v3: HĐND, TAND, VKSND cấp tỉnh — tham khảo Grok.py
+    # HĐND, TAND, VKSND cấp tỉnh
     for p_code, p_name, is_legacy in PROVINCES:
         ref = _ref("dvc", year, legacy=is_legacy)
         p_display = "Huế" if (p_code == "TTH" and year >= 2025) else p_name
@@ -579,7 +570,7 @@ def main() -> list[dict]:
     combined_path = os.path.join(DIR_RAW, f"raw_ALL_{YEAR_START}_{YEAR_END}.csv")
     save_csv(all_records, combined_path)
 
-    # Thống kê unit_level (chuỗi chuẩn v2)
+    # Thống kê unit_level
     from collections import Counter
     level_cnt = Counter(r["unit_level"] for r in all_records)
     print("\nPhân bổ unit_level:")

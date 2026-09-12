@@ -1,5 +1,5 @@
 """
-Synthetic.py — Sinh Synthetic Records + NER Labels (2018 - 2026)
+Sinh Synthetic Records + NER Labels (2018 - 2026)
 ===================================================================
 Input:  data_artifacts/master_units.csv
         data_artifacts/unit_aliases.csv
@@ -28,7 +28,7 @@ except ImportError:
     DIR_ARTIFACTS    = "./data_artifacts"
     SEED             = 42
     RECORDS_PER_UNIT = 5
-    DIR_SAMPLES = \"./datasets/samples\"
+    DIR_SAMPLES = "./datasets/samples"
 
 random.seed(SEED)
 os.makedirs(DIR_ARTIFACTS, exist_ok=True)

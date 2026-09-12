@@ -12,8 +12,6 @@ import os, sys, csv
 import pathlib as _pathlib
 from datetime import datetime, date
 from collections import Counter
-
-# Project root = 2 levels up (pipelines/synthetic_data/ -> pipelines/ -> root)
 _PROJECT_ROOT = str(_pathlib.Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)

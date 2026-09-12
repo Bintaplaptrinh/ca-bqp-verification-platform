@@ -1,16 +1,16 @@
 === DATA QA REPORT (2018 – 2026) ===
-Tổng records  : 1,633
-Approved      : 1,633
+Tổng records  : 2,413
+Approved      : 2,413
 Backlog       : 0
 Conflict keys : 0
-Cohen's Kappa : 0.972  (ĐẠT)
-Sai khác mô phỏng: 27
+Cohen's Kappa : 0.9684  (ĐẠT)
+Sai khác mô phỏng: 42
 
 Phân bổ nhãn Approved:
-  BCA: 746
-  BQP: 172
-  OTHER: 715
+  BCA: 887
+  BQP: 178
+  OTHER: 1348
 
 Phân bổ Confidence:
-  HIGH: 1580
-  MEDIUM: 53
+  HIGH: 2284
+  MEDIUM: 129

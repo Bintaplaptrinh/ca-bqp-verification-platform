@@ -1,20 +1,11 @@
 """
 Sinh từ điển Alias & Biến thể (2018 – 2026)
 ================================================================
-Chạy: python aliases.py
-
 Input:  data_artifacts/master_units.csv
 Output: data_artifacts/unit_aliases.csv
-
-Cải tiến v2:
-  - Đồng bộ MANUAL_ALIASES với unit_code chuẩn v2
-  - Thêm alias cho các đơn vị 2026 (BCA_C11, QĐ12...)
-  - PROVINCES và infer_unit_level được import từ Crawl.py (không dead code)
-  - OCR_MAP nhất quán với chuỗi đã normalize (sau smart_title_case)
 """
 import sys
 import os
-# Project root = 2 levels up (pipelines/xxx/ -> pipelines/ -> root)
 import pathlib as _pathlib
 _PROJECT_ROOT = str(_pathlib.Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
@@ -41,8 +32,8 @@ STOP_WORDS = frozenset([
     "nhân", "dân", "quân", "đội", "cơ", "quan",
 ])
 
-# ── Alias thủ công chuyên sâu ────────────────
-MANUAL_ALIASES: dict[str, list[tuple[str, str]]] = {
+# ── Alias thủ công (DEEP) ────────────────
+MANUAL_ALIASES: dict[str, list[tuple[str, str]]] = { 
     # BCA — Cục nghiệp vụ
     "BCA_C01": [("C01", "abbreviation"), ("C01 BCA", "abbreviation"),
                 ("VP CSĐT", "abbreviation"), ("Văn phòng CSĐT", "alias")],
@@ -315,7 +306,6 @@ def main() -> list[dict]:
         writer.writeheader()
         writer.writerows(aliases)
     print(f"\n[OK] unit_aliases.csv → {out_path}")
-    print("TIẾP THEO: python synthetic.py")
     return aliases
 
 

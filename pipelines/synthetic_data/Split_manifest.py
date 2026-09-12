@@ -1,5 +1,5 @@
 """
-Split_manifest.py — Phan chia tap & Xuat Manifest (2018 - 2026)
+Phan chia tap & Xuat Manifest (2018 - 2026)
 ========================================================================
 Input:  data_artifacts/synthetic_records.jsonl
         data_artifacts/master_units.csv
@@ -14,7 +14,6 @@ Output:
 """
 import sys
 import os
-# Project root = 2 levels up (pipelines/xxx/ -> pipelines/ -> root)
 import pathlib as _pathlib
 _PROJECT_ROOT = str(_pathlib.Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
@@ -42,8 +41,8 @@ except ImportError:
     REGISTRY_VERSION = "v2.0.0"
     YEAR_START       = 2018
     YEAR_END         = 2026
-    DIR_SAMPLES   = \"./datasets/samples\"
-    DIR_MANIFESTS = \"./datasets/manifests\"
+    DIR_SAMPLES   = "./datasets/samples"
+    DIR_MANIFESTS = "./datasets/manifests"
 
 random.seed(SEED)
 os.makedirs(DIR_ARTIFACTS, exist_ok=True)
@@ -229,10 +228,7 @@ def create_manifest(
     unit_name_miss_rate = (1 - ner_stats["unit_name_rate"]) * 100
     leakage_status      = "PASS" if not any("LEAK" in i for i in ner_stats.get("issues", [])) else "FAIL"
 
-    return f"""# Dataset Manifest — Auto-generated, DO NOT edit manually
-# Regenerate: python Split_manifest.py
-# Schema: Synthetic v2 (bio_tags, UNIT_CODE entity, has_unit_code_in_text)
-
+    return f"""
 dataset_metadata:
   version: "{REGISTRY_VERSION}"
   created_date: "{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -340,11 +336,11 @@ def main() -> None:
 
     print(f"[Doc] {len(registry):,} don vi | {len(records):,} records | {hard_cases_count} hard cases")
 
-    # [ADD] Validate NER fields truoc khi split
+    # Validate NER fields truoc khi split
     print("\n[Kiem tra NER schema]")
     field_check = validate_ner_fields(records)
 
-    # [ADD] Tinh NER stats tren toan bo dataset
+    # Tinh NER stats tren toan bo dataset
     print("\n[Tinh NER stats (toan bo dataset)]")
     ner_stats = compute_ner_stats(records)
     print(f"  UNIT_NAME : {ner_stats['unit_name_tagged']:,} / {ner_stats['total']:,} ({ner_stats['unit_name_rate']*100:.2f}%)")
@@ -379,7 +375,7 @@ def main() -> None:
         save_jsonl(data, path)
         print(f"  [OK] {name}.jsonl -> {path}")
 
-    # [UPD] Manifest voi ner_quality
+    # Manifest voi ner_quality
     manifest = create_manifest(
         registry, alias_path, splits, uid_groups,
         ner_stats, field_check["schema_valid"],
@@ -390,7 +386,7 @@ def main() -> None:
         f.write(manifest)
     print(f"\n[OK] dataset_manifest.yaml -> {mf_path}")
 
-    # [UPD] split_report.txt — them section NER Stats
+    # Split_report.txt — them section NER Stats
     org_test = Counter(r["ground_truth"]["organization_type"] for r in splits["test"])
     grp_test = Counter(r["ground_truth"]["template_group"]    for r in splits["test"])
     code_test = sum(1 for r in splits["test"] if any(e["label"] == "UNIT_CODE" for e in r.get("entities", [])))

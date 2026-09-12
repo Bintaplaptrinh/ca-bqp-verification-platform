@@ -1,22 +1,22 @@
 === DATASET SPLIT REPORT v2 (2018 - 2026) ===
-Thoi gian    : 2026-09-12 17:04:11
+Thoi gian    : 2026-09-12 21:33:10
 Schema       : Synthetic v2 (bio_tags, UNIT_CODE entity)
-Canonical units: 1,633
-Synthetic recs : 32,660
+Canonical units: 2,413
+Synthetic recs : 48,260
 Hard cases     : 16
 
 Chi tiet tap:
-  Train: 22,860 records (70.0%) | 1143 units
-  Val  :  4,900 records (15.0%) | 245 units
-  Test :  4,900 records (15.0%) | 245 units
+  Train: 33,780 records (70.0%) | 1689 units
+  Val  :  7,240 records (15.0%) | 362 units
+  Test :  7,240 records (15.0%) | 362 units
 
 Zero Leakage : PASS
 
 NER Stats (toan bo dataset):
-  UNIT_NAME  : 32,660 / 32,660 (100.00%)
-  UNIT_CODE  : 8,165 / 32,660 (25.00%)
-  PERSON_NAME: 29,229 / 32,660 (89.49%)
-  bio_tags   : 32,660 / 32,660 (100.00%)
+  UNIT_NAME  : 48,260 / 48,260 (100.00%)
+  UNIT_CODE  : 12,065 / 48,260 (25.00%)
+  PERSON_NAME: 43,158 / 48,260 (89.43%)
+  bio_tags   : 48,260 / 48,260 (100.00%)
 
 NER Quality Gates:
   UNIT_NAME missing rate : 0.00% (threshold <= 1%)
@@ -26,16 +26,16 @@ NER Quality Gates:
   NER gates status       : PASS
 
 Test -- Phan bo khoi:
-  BCA: 2220
-  BQP: 420
-  OTHER: 2260
+  BCA: 2860
+  BQP: 660
+  OTHER: 3720
 
 Test -- Phan bo template:
-  decision: 980
-  free_text: 735
-  letter: 735
-  ocr_table: 735
-  profile: 980
-  table_row: 735
+  decision: 1448
+  free_text: 1086
+  letter: 1086
+  ocr_table: 1086
+  profile: 1448
+  table_row: 1086
 
-Test -- UNIT_CODE tagged: 1,225 / 4,900 (25.0%)
+Test -- UNIT_CODE tagged: 1,810 / 7,240 (25.0%)

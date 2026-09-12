@@ -1,40 +1,37 @@
-# Dataset Manifest — Auto-generated, DO NOT edit manually
-# Regenerate: python Split_manifest.py
-# Schema: Synthetic v2 (bio_tags, UNIT_CODE entity, has_unit_code_in_text)
 
 dataset_metadata:
-  version: "v2.0.0"
-  created_date: "2026-09-12 17:04:11"
+  version: "v1.0.0"
+  created_date: "2026-09-12 21:33:10"
   random_seed: 42
   schema_version: "2026_E2E_Schema_v2"
-  registry_checksum: "751ebf50385c4f04b9c743be813a037fd49889ecc8905968b7843be761f7a13d"
+  registry_checksum: "07cc5ba033b3a1d772f4e52b3770d3497a58149daa8468631a12fa4ba0dd17c9"
   coverage_period: "2018 - 2026"
   administrative_scope: "64 provinces (includes historical Ha Tay)"
 
 statistics:
-  total_units: 1633
-  units_with_valid_to: 42
+  total_units: 2413
+  units_with_valid_to: 66
   org_type_breakdown:
-    BCA: 746
-    BQP: 172
-    OTHER: 715
-  total_aliases: 10124
-  alias_per_unit_avg: 6.2
-  total_synthetic_records: 32660
+    BCA: 887
+    BQP: 178
+    OTHER: 1348
+  total_aliases: 13577
+  alias_per_unit_avg: 5.6
+  total_synthetic_records: 48260
 
 split_strategy: "unit-level (Zero Leakage)"
 split_summary:
   train:
-    records: 22860
-    total_units: 1143
+    records: 33780
+    total_units: 1689
     ratio: 70.0%
   val:
-    records: 4900
-    total_units: 245
+    records: 7240
+    total_units: 362
     ratio: 15.0%
   test:
-    records: 4900
-    total_units: 245
+    records: 7240
+    total_units: 362
     ratio: 15.0%
 
 labels:
@@ -47,14 +44,14 @@ ner_entities:
   - PERSON_NAME
 
 ner_quality:
-  unit_name_tagged: 32660
+  unit_name_tagged: 48260
   unit_name_coverage: "100.00%"
-  unit_code_tagged: 8165
+  unit_code_tagged: 12065
   unit_code_coverage: "25.00%"
-  unit_code_ratio_in_text: 8165
-  person_name_tagged: 29229
+  unit_code_ratio_in_text: 12065
+  person_name_tagged: 43158
   bio_tags: true
-  bio_tags_present: 32660
+  bio_tags_present: 48260
   has_unit_code_in_text_field: true
   hard_cases_count: 16
   ocr_noise_injection: true

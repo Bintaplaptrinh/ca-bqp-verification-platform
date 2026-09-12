@@ -1,5 +1,5 @@
 """
-QA.py Data QA (Gán nhãn BCA/BQP/OTHER, 2018 – 2026)
+(Gán nhãn BCA/BQP/OTHER, 2018 – 2026)
 ==============================================================
 
 Input:  data_clean/clean_units.csv
@@ -12,7 +12,6 @@ Output:
 """
 import sys
 import os
-# Project root = 2 levels up (pipelines/xxx/ -> pipelines/ -> root)
 import pathlib as _pathlib
 _PROJECT_ROOT = str(_pathlib.Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:

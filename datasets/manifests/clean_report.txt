@@ -1,26 +1,25 @@
 === CLEAN REPORT (2018 – 2026) ===
 Giai đoạn           : 2018 – 2026
-Tổng raw records    : 14,650
-Unique canonical    : 1,633
-Duplicates loại bỏ : 13,017
+Tổng raw records    : 21,052
+Unique canonical    : 2,413
+Duplicates loại bỏ : 18,639
 Xung đột org_type  : 0
 
 Phân bổ org_type:
-  BCA: 746
-  BQP: 172
-  OTHER: 715
+  BCA: 887
+  BQP: 178
+  OTHER: 1348
 
 Phân bổ unit_level (top 10):
-  cap_tinh: 726
-  tinh_dan_su: 389
-  other_dan_su: 252
-  truong_dan_su: 66
-  cap_su_doan_tinh: 64
-  cap_tinh_bien_phong: 41
-  cap_trung_tieu_doan: 37
-  cap_qk_btl: 15
-  cap_bo: 10
-  quan_doan: 9
+  province: 2177
+  ministry: 79
+  division: 69
+  regiment: 38
+  central: 22
+  hospital: 10
+  school: 9
+  corps: 5
+  district: 4
 
 Cảnh báo:
-  [WARN] 2 unit_code bị trùng: ['BQP_F308', 'BQP_F312']
+  [WARN] 15 unit_code bị trùng: ['BCA_CA_TTH', 'BCA_CA_TTH_PC01', 'BCA_CA_TTH_PC02', 'BCA_CA_TTH_PC03', 'BCA_CA_TTH_PC04', 'BCA_CA_TTH_PC06', 'BCA_CA_TTH_PC07', 'BCA_CA_TTH_PC08', 'BCA_CA_TTH_PA01', 'BCA_CA_TTH_PA02']
