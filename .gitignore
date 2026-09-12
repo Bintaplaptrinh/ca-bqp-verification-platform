@@ -12,3 +12,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+
+.claude-context/
+.github/workflows/ci.yml.proposed
