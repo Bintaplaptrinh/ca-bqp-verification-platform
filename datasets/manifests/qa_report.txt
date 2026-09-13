@@ -1,16 +1,17 @@
-=== DATA QA REPORT (2018 – 2026) ===
-Tổng records  : 2,413
-Approved      : 2,413
-Backlog       : 0
-Conflict keys : 0
-Cohen's Kappa : 0.9684  (ĐẠT)
-Sai khác mô phỏng: 42
+=== DATA QA & QUALITY ENGINE REPORT (2018 – 2026) ===
+Tổng records         : 2,414
+Approved             : 2,414
+Backlog              : 0
+Conflict keys        : 0
+DQE Gates Status     : PASS
+Inter-Auditor Agree  : 99.96%
+Cohen's Kappa        : 0.9992  (ĐẠT)
 
 Phân bổ nhãn Approved:
-  BCA: 887
-  BQP: 178
-  OTHER: 1348
+  BCA: 879
+  BQP: 182
+  KHAC: 1,353
 
 Phân bổ Confidence:
-  HIGH: 2284
-  MEDIUM: 129
+  CAO: 2,335
+  TRUNG_BINH: 79

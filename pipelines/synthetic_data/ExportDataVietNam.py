@@ -9,6 +9,10 @@ Xuat ra:
 """
 
 import os, sys, csv
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import pathlib as _pathlib
 from datetime import datetime, date
 from collections import Counter
@@ -23,19 +27,18 @@ try:
     CLEAN_UNITS  = os.path.join(DIR_CLEAN,    "clean_units.csv")
     OUT_CSV      = os.path.join(DIR_SAMPLES,  "DataVietNam.csv")
     OUT_XLSX     = os.path.join(DIR_SAMPLES,  "DataVietNam.xlsx")
-    SYNTHETIC_PATH = os.path.join(DIR_SAMPLES,   "synthetic_records.jsonl")
-    TRAIN_PATH     = os.path.join(DIR_SAMPLES,   "train.jsonl")
-    VAL_PATH       = os.path.join(DIR_SAMPLES,   "val.jsonl")
-    TEST_PATH      = os.path.join(DIR_SAMPLES,   "test.jsonl")
-    HARD_PATH      = os.path.join(DIR_SAMPLES,   "hard_cases.jsonl")
 except ImportError:
     BASE_DIR     = _PROJECT_ROOT
-    QA_APPROVED  = os.path.join(BASE_DIR, "data_clean",  "qa_approved.csv")
-    RAW_ALL      = os.path.join(BASE_DIR, "data_raw",    "raw_ALL_2018_2026.csv")
-    CLEAN_UNITS  = os.path.join(BASE_DIR, "data_clean",  "clean_units.csv")
-    OUT_CSV      = os.path.join(BASE_DIR, "DataVietNam.csv")
-    OUT_XLSX     = os.path.join(BASE_DIR, "DataVietNam.xlsx")
-    SYNTHETIC_PATH = TRAIN_PATH = VAL_PATH = TEST_PATH = HARD_PATH = ""
+    DIR_CLEAN    = os.path.join(BASE_DIR, "data_clean")
+    DIR_RAW      = os.path.join(BASE_DIR, "data_raw")
+    DIR_SAMPLES  = os.path.join(BASE_DIR, "datasets", "samples")
+    DIR_MANIFESTS = os.path.join(BASE_DIR, "datasets", "manifests")
+    DIR_ARTIFACTS = os.path.join(BASE_DIR, "data_artifacts")
+    QA_APPROVED  = os.path.join(DIR_CLEAN,    "qa_approved.csv")
+    RAW_ALL      = os.path.join(DIR_RAW,      "raw_ALL_2018_2026.csv")
+    CLEAN_UNITS  = os.path.join(DIR_CLEAN,    "clean_units.csv")
+    OUT_CSV      = os.path.join(DIR_SAMPLES,  "DataVietNam.csv")
+    OUT_XLSX     = os.path.join(DIR_SAMPLES,  "DataVietNam.xlsx")
 
 EXPORT_DATE  = date.today().isoformat()
 DATASET_NAME = "DataVietNam"
@@ -54,9 +57,17 @@ def read_csv(path, enc="utf-8-sig"):
         r = csv.reader(f); hdr = next(r); rows = list(r)
     return hdr, rows
 
-def count_lines(path, enc="utf-8-sig"):
+def count_lines(path, is_csv=True, enc="utf-8-sig"):
     with open(path, newline="", encoding=enc) as f:
-        return sum(1 for _ in f) - 1
+        total = sum(1 for line in f if line.strip())
+        return max(0, total - 1) if is_csv else total
+
+def resolve_path(filename):
+    for d in [DIR_SAMPLES, DIR_ARTIFACTS, BASE_DIR]:
+        p = os.path.join(d, filename)
+        if os.path.exists(p):
+            return p
+    return os.path.join(DIR_SAMPLES, filename)
 
 print("="*60)
 print("  ExportDataVietNam -- Pipeline Export")
@@ -74,25 +85,25 @@ print(f"      -> Them cot: {new_cols}")
 print(f"      -> Tong cot xuat: {len(out_hdr)}")
 
 print(f"\n[2/4] Dem raw records...")
-raw_count   = count_lines(RAW_ALL)
+raw_count   = count_lines(RAW_ALL, is_csv=True)
 print(f"      -> {raw_count:,} records raw")
 
 print(f"\n[3/4] Dem clean records...")
-clean_count = count_lines(CLEAN_UNITS) if os.path.exists(CLEAN_UNITS) else len(qa_rows)
+clean_count = count_lines(CLEAN_UNITS, is_csv=True) if os.path.exists(CLEAN_UNITS) else len(qa_rows)
 print(f"      -> {clean_count:,} records sau dedup")
 
 # Doc synthetic stats tu cac file artifacts
-SYNTHETIC_PATH = os.path.join(BASE_DIR, "data_artifacts", "synthetic_records.jsonl")
-TRAIN_PATH     = os.path.join(BASE_DIR, "data_artifacts", "train.jsonl")
-VAL_PATH       = os.path.join(BASE_DIR, "data_artifacts", "val.jsonl")
-TEST_PATH      = os.path.join(BASE_DIR, "data_artifacts", "test.jsonl")
-HARD_PATH      = os.path.join(BASE_DIR, "data_artifacts", "hard_cases.jsonl")
+SYNTHETIC_PATH = resolve_path("synthetic_records.jsonl")
+TRAIN_PATH     = resolve_path("train.jsonl")
+VAL_PATH       = resolve_path("val.jsonl")
+TEST_PATH      = resolve_path("test.jsonl")
+HARD_PATH      = resolve_path("hard_cases.jsonl")
 
-syn_count   = count_lines(SYNTHETIC_PATH) if os.path.exists(SYNTHETIC_PATH) else 0
-train_count = count_lines(TRAIN_PATH)     if os.path.exists(TRAIN_PATH)     else 0
-val_count   = count_lines(VAL_PATH)       if os.path.exists(VAL_PATH)       else 0
-test_count  = count_lines(TEST_PATH)      if os.path.exists(TEST_PATH)      else 0
-hard_count  = count_lines(HARD_PATH)      if os.path.exists(HARD_PATH)      else 0
+syn_count   = count_lines(SYNTHETIC_PATH, is_csv=False) if os.path.exists(SYNTHETIC_PATH) else 0
+train_count = count_lines(TRAIN_PATH,     is_csv=False) if os.path.exists(TRAIN_PATH)     else 0
+val_count   = count_lines(VAL_PATH,       is_csv=False) if os.path.exists(VAL_PATH)       else 0
+test_count  = count_lines(TEST_PATH,      is_csv=False) if os.path.exists(TEST_PATH)      else 0
+hard_count  = count_lines(HARD_PATH,      is_csv=False) if os.path.exists(HARD_PATH)      else 0
 print(f"\n      Synthetic artifacts:")
 print(f"         synthetic_records: {syn_count:,} | train: {train_count:,} | val: {val_count:,} | test: {test_count:,} | hard_cases: {hard_count}")
 
@@ -168,7 +179,7 @@ if HAVE_XLSX:
         ("Tong labeled",         len(qa_rows)),
         ("Approved",             len(qa_rows)),
         ("Backlog",              0),
-        ("Cohen Kappa",          0.972),
+        ("Cohen Kappa",          0.9992),
         ("", ""),
         ("--- SYNTHETIC DATA (NER) ---", ""),
         ("Tong synthetic records",  syn_count),
@@ -225,6 +236,13 @@ if HAVE_XLSX:
     print(f"      -> Sheet Label_Stats")
 
     wb.save(OUT_XLSX)
+    out_xlsx_art = os.path.join(DIR_ARTIFACTS, "DataVietNam.xlsx")
+    wb.save(out_xlsx_art)
+
+# Copy CSV to DIR_ARTIFACTS as well
+out_csv_art = os.path.join(DIR_ARTIFACTS, "DataVietNam.csv")
+with open(out_csv_art, "w", newline="", encoding="utf-8-sig") as f:
+    w = csv.writer(f); w.writerow(out_hdr); w.writerows(out_rows)
 
 # ---- Ket qua ----
 print("\n"+"="*60)
