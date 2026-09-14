@@ -1,1 +1,3 @@
-__version__ = "0.1.0"
+"""CABQP Package Root."""
+
+__version__ = "2026.1.0"
