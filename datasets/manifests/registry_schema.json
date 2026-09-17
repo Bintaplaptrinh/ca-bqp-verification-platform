@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "required": [
+    "unit_id",
+    "canonical_name",
+    "organization_type",
+    "unit_level",
+    "coverage_group",
+    "normalized_key",
+    "ascii_key",
+    "source_url",
+    "source_sha256",
+    "qa_status",
+    "registry_version"
+  ],
+  "organization_type": [
+    "BCA",
+    "BQP",
+    "OTHER"
+  ],
+  "qa_status": [
+    "APPROVED",
+    "PENDING_QA",
+    "REJECTED"
+  ],
+  "note": "source_hash_kind=EVIDENCE_RECORD_SHA256 in the bundled 43-unit baseline; replace with raw-source snapshot hashes when available."
+}
