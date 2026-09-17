@@ -1,0 +1,34 @@
+{
+  "registry_version": "2026.09-v2-full43",
+  "published": {
+    "BCA_PROVINCIAL_POLICE": {
+      "approved": 34,
+      "expected": 34,
+      "status": "COMPLETE"
+    },
+    "BQP_MILITARY_REGIONS": {
+      "approved": 7,
+      "expected": 7,
+      "status": "COMPLETE"
+    },
+    "BQP_ARMY_CORPS": {
+      "approved": 2,
+      "expected": 2,
+      "status": "COMPLETE"
+    }
+  },
+  "not_yet_published": {
+    "BCA_COMMUNE_POLICE": {
+      "approved": 0,
+      "expected": 3319
+    },
+    "BQP_PROVINCIAL_COMMANDS": {
+      "approved": 0,
+      "expected": 34
+    },
+    "BQP_BORDER_GUARD_COMMANDS": {
+      "approved": 0,
+      "expected": 30
+    }
+  }
+}

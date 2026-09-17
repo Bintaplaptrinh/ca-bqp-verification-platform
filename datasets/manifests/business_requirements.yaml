@@ -1,0 +1,8 @@
+version: "2026-09"
+invariants:
+  - "NOT_FOUND != OTHER"
+  - "CURRENT_WORK_UNIT must be separated from FORMER_WORK_UNIT"
+  - "BCA/BQP unit membership does not by itself prove subject-group membership"
+  - "Policy decisions require enough fields and an effective policy snapshot"
+  - "Synthetic person/salary/policy data must remain SYNTHETIC_DEMO"
+  - "Published Registry is the authority for BCA/BQP unit resolution"
