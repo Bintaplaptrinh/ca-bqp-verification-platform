@@ -31,7 +31,7 @@ const POLICY_STATUS_LABELS = {
 };
 
 function formatScore(value) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '—';
+  if (typeof value !== 'number' || Number.isNaN(value)) return 'Chưa có';
   return `${Math.round(value * 100)}%`;
 }
 
@@ -46,7 +46,7 @@ export default function DetailedComparisonModal({ isOpen, onClose, caseDetail })
   const orgType = detail.organization_type || 'UNKNOWN';
   const isMatched = detail.resolution_status === 'MATCHED';
   const caseId = detail.case?.id || '';
-  const caseCode = caseId ? `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}` : '—';
+  const caseCode = caseId ? `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}` : 'Chưa có';
 
   const comparisonRows = [
     { field: 'Họ và tên', value: subject.name || 'Chưa cung cấp' },
@@ -70,7 +70,7 @@ export default function DetailedComparisonModal({ isOpen, onClose, caseDetail })
                 ĐỐI CHIẾU CHI TIẾT
               </h3>
               <p className="text-[11.5px] sm:text-[12.5px] text-slate-500 mt-0.5 truncate">
-                Mã hồ sơ: <span className="font-mono text-emerald-700 font-bold">{caseCode}</span> — <span className="text-slate-900 font-bold">{subject.name || 'Chưa cung cấp'}</span>
+                Mã hồ sơ: <span className="font-mono text-emerald-700 font-bold">{caseCode}</span>, <span className="text-slate-900 font-bold">{subject.name || 'Chưa cung cấp'}</span>
               </p>
             </div>
           </div>
@@ -95,7 +95,7 @@ export default function DetailedComparisonModal({ isOpen, onClose, caseDetail })
           <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
             <span className="text-slate-500 text-[12px] block">Độ tin cậy quyết định</span>
             <span className="text-[20px] font-bold text-red-600 block mt-0.5">{formatScore(result.decision_confidence)}</span>
-            <span className="text-[11px] text-slate-400">Phiên bản danh mục: {result.registry_version || '—'}</span>
+            <span className="text-[11px] text-slate-400">Phiên bản danh mục: {result.registry_version || 'Chưa có'}</span>
           </div>
 
           <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
@@ -109,7 +109,7 @@ export default function DetailedComparisonModal({ isOpen, onClose, caseDetail })
             <span className={`text-[15px] font-bold block mt-1 ${isMatched ? 'text-emerald-700' : 'text-amber-700'}`}>
               {STATUS_LABELS[detail.resolution_status] || 'Chưa xác định'}
             </span>
-            <span className="text-[11px] text-slate-400">Phiên bản bộ tiêu chí: {result.taxonomy_version || '—'}</span>
+            <span className="text-[11px] text-slate-400">Phiên bản bộ tiêu chí: {result.taxonomy_version || 'Chưa có'}</span>
           </div>
         </div>
 
@@ -158,9 +158,9 @@ export default function DetailedComparisonModal({ isOpen, onClose, caseDetail })
                   <tbody className="divide-y divide-slate-100">
                     {topCandidates.map((c, idx) => (
                       <tr key={idx}>
-                        <td className="py-2.5 px-4">{c.full_name || c.canonical_name || c.canonical_unit_name || '—'}</td>
-                        <td className="py-2.5 px-4">{c.organization_type || '—'}</td>
-                        <td className="py-2.5 px-4 text-right font-mono">{typeof c.score === 'number' ? `${Math.round(c.score)}%` : (c.score ?? '—')}</td>
+                        <td className="py-2.5 px-4">{c.full_name || c.canonical_name || c.canonical_unit_name || 'Chưa có'}</td>
+                        <td className="py-2.5 px-4">{c.organization_type || 'Chưa có'}</td>
+                        <td className="py-2.5 px-4 text-right font-mono">{typeof c.score === 'number' ? `${Math.round(c.score)}%` : (c.score ?? 'Chưa có')}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -187,8 +187,8 @@ export default function DetailedComparisonModal({ isOpen, onClose, caseDetail })
                       <tr key={idx}>
                         <td className="py-2.5 px-4 font-semibold">{e.policy_id}</td>
                         <td className="py-2.5 px-4">{POLICY_STATUS_LABELS[e.status] || 'Chưa xác định'}</td>
-                        <td className="py-2.5 px-4 font-mono text-[12px]">{e.policy_version || '—'}</td>
-                        <td className="py-2.5 px-4 text-slate-600">{e.reason || '—'}</td>
+                        <td className="py-2.5 px-4 font-mono text-[12px]">{e.policy_version || 'Chưa có'}</td>
+                        <td className="py-2.5 px-4 text-slate-600">{e.reason || 'Chưa có'}</td>
                       </tr>
                     ))}
                   </tbody>

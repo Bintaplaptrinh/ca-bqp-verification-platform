@@ -96,7 +96,7 @@ export default function OcrResultModal({
                     ? 'bg-[#FDF0BE] text-amber-800 border-amber-200'
                     : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                 }`}>
-                  {extractedData?.qualityGate === 'FAIL' ? 'Cần kiểm tra' : 'Độ tin cậy'} {extractedData?.confidence || '—'}
+                  {extractedData?.qualityGate === 'FAIL' ? 'Cần kiểm tra' : 'Độ tin cậy'} {extractedData?.confidence || 'Chưa có'}
                 </span>
               </div>
               <p className="text-[12px] text-slate-500 mt-0.5 truncate">
@@ -125,7 +125,7 @@ export default function OcrResultModal({
                 <span className="font-bold">
                   Tài liệu này có {extractedData.blockCount} người.
                 </span>{' '}
-                Hệ thống đã tự động tách thành {extractedData.blockCount} hồ sơ riêng biệt — đây là hồ sơ{' '}
+                Hệ thống đã tự động tách thành {extractedData.blockCount} hồ sơ riêng biệt. Đây là hồ sơ{' '}
                 <span className="font-semibold">#{extractedData.blockIndex + 1}/{extractedData.blockCount}</span>.
                 Các hồ sơ còn lại đã được tạo và có thể xem tại mục <span className="font-semibold">Lịch sử</span>.
               </div>
@@ -186,7 +186,7 @@ export default function OcrResultModal({
                           <tr key={rowIndex} className="border-b border-slate-100 last:border-0">
                             <td className="sticky left-0 w-9 px-2 py-2 text-center text-slate-400 bg-slate-50 border-r border-slate-100">{rowIndex + 1}</td>
                             {row.map((cell, cellIndex) => (
-                              <td key={cellIndex} className={`px-3 py-2 min-w-32 text-slate-800 border-r border-slate-100 last:border-r-0 ${cellIndex === 0 ? 'font-semibold' : ''}`}>{cell || '—'}</td>
+                              <td key={cellIndex} className={`px-3 py-2 min-w-32 text-slate-800 border-r border-slate-100 last:border-r-0 ${cellIndex === 0 ? 'font-semibold' : ''}`}>{cell || 'Chưa có'}</td>
                             ))}
                           </tr>
                         ))}
@@ -505,9 +505,9 @@ function BulkResultModal({ file, data, onClose, onConfirm }) {
                       return (
                         <tr key={row.row_index} className="border-t border-slate-100">
                           <td className="px-4 py-2 text-slate-500">{row.row_index}</td>
-                          <td className="px-4 py-2 font-semibold text-slate-900">{row.subject_name || '—'}</td>
-                          <td className="px-4 py-2 text-slate-700 whitespace-nowrap">{row.subject_code || '—'}</td>
-                          <td className="px-4 py-2 text-slate-700">{row.unit_name || '—'}</td>
+                          <td className="px-4 py-2 font-semibold text-slate-900">{row.subject_name || 'Chưa có'}</td>
+                          <td className="px-4 py-2 text-slate-700 whitespace-nowrap">{row.subject_code || 'Chưa có'}</td>
+                          <td className="px-4 py-2 text-slate-700">{row.unit_name || 'Chưa có'}</td>
                           <td className="px-4 py-2 whitespace-nowrap"><span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${status[1]}`}>{status[0]}</span></td>
                         </tr>
                       );
@@ -533,11 +533,11 @@ function BulkResultModal({ file, data, onClose, onConfirm }) {
                         <td className="px-4 py-2 font-medium text-slate-800">{header}</td>
                         <td className="px-4 py-2">
                           <select disabled={alreadyProcessed} value={mapping[header] || ''} onChange={(event) => setMapping((current) => ({ ...current, [header]: event.target.value || null }))} className="w-full h-9 rounded-md border border-slate-200 px-2 bg-white disabled:bg-slate-100">
-                            <option value="">— Bỏ qua —</option>
+                            <option value="">Bỏ qua</option>
                             {BULK_FIELDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                           </select>
                         </td>
-                        {hasMappingConfidence && <td className="px-4 py-2 text-right font-semibold text-slate-700">{details[header]?.confidence != null ? `${Math.round(details[header].confidence * 100)}%` : '—'}</td>}
+                        {hasMappingConfidence && <td className="px-4 py-2 text-right font-semibold text-slate-700">{details[header]?.confidence != null ? `${Math.round(details[header].confidence * 100)}%` : 'Chưa có'}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -553,7 +553,7 @@ function BulkResultModal({ file, data, onClose, onConfirm }) {
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-md border border-slate-200 font-semibold text-slate-700">Đóng</button>
           {!alreadyProcessed && (
             <button type="button" disabled={submitting} onClick={handleConfirm} className="px-5 py-2 rounded-md bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white font-semibold">
-              {submitting ? 'Đang xác nhận…' : 'Xác nhận cột và xử lý danh sách'}
+              {submitting ? 'Đang xác nhận' : 'Xác nhận cột và xử lý danh sách'}
             </button>
           )}
         </div>

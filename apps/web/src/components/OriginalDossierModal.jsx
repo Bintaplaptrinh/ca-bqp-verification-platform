@@ -33,7 +33,7 @@ const PARSE_STATUS_LABELS = {
 };
 
 function formatBytes(bytes) {
-  if (typeof bytes !== 'number' || Number.isNaN(bytes)) return '—';
+  if (typeof bytes !== 'number' || Number.isNaN(bytes)) return 'Chưa có';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
@@ -47,7 +47,7 @@ export default function OriginalDossierModal({ isOpen, onClose, caseDetail, onOp
   const documents = Array.isArray(detail.documents) ? detail.documents : [];
   const orgType = detail.organization_type || 'UNKNOWN';
   const caseId = detail.case?.id || '';
-  const caseCode = caseId ? `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}` : '—';
+  const caseCode = caseId ? `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}` : 'Chưa có';
 
   const handlePrint = () => {
     window.print();
@@ -91,7 +91,7 @@ export default function OriginalDossierModal({ isOpen, onClose, caseDetail, onOp
                     {ORG_LABELS[orgType] || ORG_LABELS.UNKNOWN}
                   </span>
                   <h4 className="text-[18px] font-bold text-slate-900 leading-tight mt-0.5">
-                    {subject.name || '—'}
+                    {subject.name || 'Chưa có'}
                   </h4>
                   <p className="text-[13px] text-slate-600 mt-1 font-medium">
                     {subject.position || 'Chưa xác định chức vụ'}
@@ -102,7 +102,7 @@ export default function OriginalDossierModal({ isOpen, onClose, caseDetail, onOp
               <div className="space-y-2.5 text-[13px]">
                 <div className="flex justify-between py-1 border-b border-slate-200/60">
                   <span className="text-slate-500">Mã định danh:</span>
-                  <span className="font-mono font-semibold text-slate-900">{subject.code || '—'}</span>
+                  <span className="font-mono font-semibold text-slate-900">{subject.code || 'Chưa có'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-200/60">
                   <span className="text-slate-500">Đơn vị hiện tại:</span>
@@ -141,14 +141,14 @@ export default function OriginalDossierModal({ isOpen, onClose, caseDetail, onOp
                           <FileText className="w-4 h-4 text-slate-500 flex-shrink-0 mt-0.5" />
                           <div className="min-w-0">
                             <p className="font-semibold text-slate-900 truncate">{doc.file_name || 'Không rõ tên tệp'}</p>
-                            <p className="text-slate-500">{doc.mime_type || '—'} · {formatBytes(doc.size_bytes)}</p>
+                            <p className="text-slate-500">{doc.mime_type || 'Chưa có'}, {formatBytes(doc.size_bytes)}</p>
                           </div>
                         </div>
                         <div className="text-right flex-shrink-0">
                           <p className="font-mono text-[11px] text-slate-600" title={doc.checksum || ''}>
-                            {doc.checksum ? `Mã kiểm tra: ${doc.checksum.slice(0, 12)}…` : 'Chưa có mã kiểm tra'}
+                            {doc.checksum ? `Mã kiểm tra: ${doc.checksum.slice(0, 12)}` : 'Chưa có mã kiểm tra'}
                           </p>
-                          <p className="text-slate-500">{PARSE_STATUS_LABELS[doc.parse_status] || 'Chưa xử lý'}{typeof doc.parse_confidence === 'number' ? ` · ${Math.round(doc.parse_confidence * 100)}%` : ''}</p>
+                          <p className="text-slate-500">{PARSE_STATUS_LABELS[doc.parse_status] || 'Chưa xử lý'}{typeof doc.parse_confidence === 'number' ? `, độ tin cậy ${Math.round(doc.parse_confidence * 100)}%` : ''}</p>
                         </div>
                       </div>
                     ))}
