@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
-import { Loader2, CheckCircle2, XCircle, Plus } from '../../icons/index.jsx';
+import { Loader2, CheckCircle2, XCircle, Plus, Users } from '../../icons/index.jsx';
+import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
 
 const TABS = [
   { value: 'persons', label: 'Người' },
@@ -81,19 +82,19 @@ function PersonsTab({ apiBaseUrl }) {
         <input
           value={form.full_name}
           onChange={(e) => setForm((x) => ({ ...x, full_name: e.target.value }))}
-          placeholder="Họ và tên..."
+          placeholder="Họ và tên"
           className="text-sm border border-slate-200 rounded-md px-2.5 py-1.5 outline-none focus:border-red-400 flex-1 min-w-[180px]"
         />
         <input
           value={form.canonical_unit_id}
           onChange={(e) => setForm((x) => ({ ...x, canonical_unit_id: e.target.value }))}
-          placeholder="Mã đơn vị..."
+          placeholder="Mã đơn vị"
           className="text-sm border border-slate-200 rounded-md px-2.5 py-1.5 outline-none focus:border-red-400 flex-1 min-w-[180px]"
         />
         <input
           value={form.source_url}
           onChange={(e) => setForm((x) => ({ ...x, source_url: e.target.value }))}
-          placeholder="Đường dẫn hoặc tài liệu nguồn — cần để duyệt"
+          placeholder="Đường dẫn hoặc tài liệu nguồn (bắt buộc khi duyệt)"
           className="text-sm border border-slate-200 rounded-md px-2.5 py-1.5 outline-none focus:border-red-400 flex-1 min-w-[200px]"
         />
         <button
@@ -114,7 +115,7 @@ function PersonsTab({ apiBaseUrl }) {
       {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{String(error)}</div>}
 
       {loading ? (
-        <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>
+        <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>
       ) : (
         <div className="bg-white border border-slate-200 rounded-md overflow-hidden">
           <table className="w-full text-sm">
@@ -190,7 +191,7 @@ function CandidatesTab({ apiBaseUrl }) {
     }
   };
 
-  if (loading) return <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>;
+  if (loading) return <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>;
 
   return (
     <div>
@@ -247,7 +248,7 @@ function VersionsTab({ apiBaseUrl }) {
     }
   };
 
-  if (loading) return <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>;
+  if (loading) return <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>;
 
   return (
     <div>
@@ -267,7 +268,7 @@ function VersionsTab({ apiBaseUrl }) {
               <tr key={v.id}>
                 <td className="px-4 py-2.5 font-medium text-slate-900">{v.version}</td>
                 <td className="px-4 py-2.5"><QaBadge status={v.status} /></td>
-                <td className="px-4 py-2.5 text-slate-600">{v.counts?.persons ?? '—'}</td>
+                <td className="px-4 py-2.5 text-slate-600">{v.counts?.persons ?? 'Chưa có'}</td>
                 <td className="px-4 py-2.5 text-right">
                   <div className="inline-flex gap-1.5">
                     {v.status === 'DRAFT' && (
@@ -293,18 +294,20 @@ export function PersonRegistryAdminPage({ apiBaseUrl }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 py-6">
-        <h1 className="text-xl font-extrabold text-slate-900 mb-0.5">Danh mục cá nhân</h1>
-        <p className="text-sm text-slate-500 mb-4">
-          Hồ sơ cá nhân được liên kết với mã đơn vị; việc xác định phạm vi CA/BQP dựa trên danh mục đơn vị nghiệp vụ.
-        </p>
-        <div className="flex gap-1.5 mb-4">
+      <PageContainer className="py-3 sm:py-4">
+        <PageHeader
+          trail={[{ label: 'Trang chủ' }, { label: 'Quản trị' }]}
+          title="Danh mục cá nhân"
+          description="Hồ sơ cá nhân được liên kết với mã đơn vị. Phạm vi CA/BQP được xác định theo danh mục đơn vị nghiệp vụ."
+          icon={Users}
+        />
+        <div className="flex border-b border-slate-200 mb-3">
           {TABS.map((t) => (
             <button
               key={t.value}
               onClick={() => setTab(t.value)}
-              className={`px-3.5 py-1.5 rounded-md text-sm font-semibold transition-colors ${
-                tab === t.value ? 'bg-red-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'
+              className={`px-3.5 pt-1.5 pb-2 mr-1 text-[13px] font-semibold border-b-2 transition-colors ${
+                tab === t.value ? 'text-red-600 border-red-600 bg-red-50/70' : 'text-slate-600 border-transparent hover:text-slate-900'
               }`}
             >
               {t.label}
@@ -314,7 +317,7 @@ export function PersonRegistryAdminPage({ apiBaseUrl }) {
         {tab === 'persons' && <PersonsTab apiBaseUrl={apiBaseUrl} />}
         {tab === 'candidates' && <CandidatesTab apiBaseUrl={apiBaseUrl} />}
         {tab === 'versions' && <VersionsTab apiBaseUrl={apiBaseUrl} />}
-      </div>
+      </PageContainer>
     </div>
   );
 }

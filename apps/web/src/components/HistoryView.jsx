@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Clock, Search, RotateCcw } from '../icons/index.jsx';
+import { Clock, Search, RotateCcw, History } from '../icons/index.jsx';
+import PageHeader from './layout/PageHeader.jsx';
 
 const RESULT_STATUS_STYLES = {
   VERIFIED: { bar: 'bg-emerald-600', text: 'text-emerald-800' },
@@ -79,40 +80,37 @@ export default function HistoryView({
   const noConclusionCount = historyList.filter((i) => i.statusCategory === 'NO_CONCLUSION').length;
 
   return (
-    <div className="max-w-[1536px] w-full mx-auto px-3.5 sm:px-6 md:px-8 py-2.5 sm:py-3 h-full flex-1 flex flex-col overflow-hidden min-h-0">
-      {/* Top Banner & Action */}
-      <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200">
-        <div>
-          <h1 className="text-[19px] sm:text-[22px] md:text-[24px] font-bold text-slate-900 leading-tight">
-            Lịch sử tra cứu hồ sơ CA/BQP
-          </h1>
-          <p className="text-[12px] sm:text-[12.5px] text-slate-500 mt-0.5">
-            Theo dõi và kiểm tra lại các lượt tra cứu đã được lưu trong hệ thống.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {onRefresh && (
+    <div className="max-w-[1480px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-3 h-full flex-1 flex flex-col overflow-hidden min-h-0">
+      <PageHeader
+        className="mb-2"
+        trail={[{ label: 'Trang chủ', onClick: onBackToSearch }]}
+        title="Lịch sử tra cứu hồ sơ"
+        description="Các lượt tra cứu đã lưu trong hệ thống."
+        icon={History}
+        actions={
+          <>
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="px-3 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                <span>Tải lại</span>
+              </button>
+            )}
             <button
               type="button"
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-600 font-semibold text-[13px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              onClick={onBackToSearch}
+              className="px-3.5 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
             >
-              <RotateCcw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              <span>Tải lại</span>
+              <Search className="w-3.5 h-3.5" />
+              <span>Tra cứu mới</span>
             </button>
-          )}
-          <button
-            type="button"
-            onClick={onBackToSearch}
-            className="w-full sm:w-auto px-3.5 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold text-[13px] flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-          >
-            <Search className="w-3.5 h-3.5" />
-            <span>Tra cứu hồ sơ mới</span>
-          </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Summary counts */}
       <div className="flex-shrink-0 grid grid-cols-2 lg:grid-cols-4 bg-white border border-slate-200 rounded-md divide-x divide-slate-200 my-2">
@@ -139,7 +137,7 @@ export default function HistoryView({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Tìm theo họ tên, mã hồ sơ hoặc đơn vị..."
+            placeholder="Tìm theo họ tên, mã hồ sơ hoặc đơn vị"
             className="w-full h-8.5 pl-9 pr-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-1 focus:ring-red-100 text-[13px] bg-slate-50/50 outline-none transition-all"
           />
         </div>
@@ -231,8 +229,8 @@ export default function HistoryView({
         <div className="hidden sm:block flex-1 min-h-0 overflow-y-auto overflow-x-auto">
           <table className="w-full text-left text-[13px] border-collapse">
             <thead className="sticky top-0 bg-slate-50 z-10 shadow-xs">
-              <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 text-[12px]">
-                <th className="py-2.5 px-3.5 w-32">Mã hồ sơ</th>
+              <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 text-[11px] uppercase tracking-wider">
+                <th className="py-2.5 px-3.5 w-44">Mã hồ sơ</th>
                 <th className="py-2.5 px-3.5">Đối tượng xác minh</th>
                 <th className="py-2.5 px-3.5">Đơn vị tra cứu</th>
                 <th className="py-2.5 px-3.5 w-40">Kết quả đối soát</th>
@@ -273,7 +271,7 @@ export default function HistoryView({
               ) : (
                 filteredHistory.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 px-4 font-mono font-bold text-red-600">
+                    <td className="py-3.5 px-4 font-mono font-bold text-red-600 whitespace-nowrap">
                       {item.caseCode}
                     </td>
 

@@ -39,12 +39,12 @@ test('the reviewer preset is applied as permissions, not as a role', async ({ pa
   await page.getByRole('button', { name: 'Quản trị', exact: true }).click();
   await page.getByText('Quản trị tài khoản').click();
 
-  await page.getByPlaceholder('Tìm theo tên, mã số, phòng ban…').fill('user');
+  await page.getByPlaceholder('Tìm theo tên, mã số, phòng ban').fill('user');
   await expect(page.getByText('Cán bộ tra cứu').first()).toBeVisible({ timeout: 20_000 });
 
   // Opening an account's permission editor shows the preset buttons an
   // administrator uses to grant "cán bộ thẩm định".
-  await page.getByRole('button', { name: /\d+ quyền — chỉnh sửa/ }).first().click();
+  await page.getByRole('button', { name: /\d+ quyền \(chỉnh sửa\)/ }).first().click();
   // Scope to the row editor: the create form above carries the same preset buttons.
   const editor = page.getByRole('table');
   await expect(editor.getByRole('button', { name: 'Cán bộ thẩm định', exact: true })).toBeVisible();

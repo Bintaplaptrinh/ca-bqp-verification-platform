@@ -45,7 +45,12 @@ import {
   Layers,
   Image as ImageIcon,
   FileImage,
+  ChevronRight,
 } from '../icons/index.jsx';
+import AppHeader from './layout/AppHeader.jsx';
+import AppNavigation from './layout/AppNavigation.jsx';
+import AppFooter from './layout/AppFooter.jsx';
+import PageHeader, { PageContainer } from './layout/PageHeader.jsx';
 
 import OriginalDossierModal from './OriginalDossierModal.jsx';
 import DetailedComparisonModal from './DetailedComparisonModal.jsx';
@@ -82,7 +87,7 @@ function buildCaseResultFromDetail(caseId, caseDetail) {
     subject_group_confidence: res?.evidence?.subject_group_confidence ?? null,
     taxonomy_version: res?.taxonomy_version || null,
     salary_status: caseDetail?.salary_status || 'Không đủ dữ liệu',
-    score: res?.score ? `${Math.round(res.score * 100)}%` : '—',
+    score: res?.score ? `${Math.round(res.score * 100)}%` : 'Chưa có',
     evidence: res?.evidence || [],
     topCandidates: Array.isArray(res?.top_candidates) ? res.top_candidates : [],
     eligibility: Array.isArray(caseDetail?.eligibility) ? caseDetail.eligibility : [],
@@ -151,7 +156,7 @@ axios.interceptors.response.use(
 const DEFAULT_HISTORY = [];
 
 function UploadStatusBadge({ data, compact = false }) {
-  const confidence = data?.confidence && data.confidence !== '—' ? data.confidence : null;
+  const confidence = data?.confidence && data.confidence !== 'Chưa có' ? data.confidence : null;
   const confidenceNumber = confidence ? Number.parseFloat(String(confidence).replace('%', '')) : null;
   const qualityLabel = Number.isFinite(confidenceNumber)
     ? confidenceNumber >= 90
@@ -184,7 +189,7 @@ function UploadStatusBadge({ data, compact = false }) {
     return (
       <span className={`inline-flex items-center gap-1 py-0.5 rounded border border-amber-200 bg-[#FDF0BE] text-amber-700 font-bold ${sizeClass}`}>
         <AlertTriangle className="w-3 h-3" />
-        <span>Cần kiểm tra{confidence ? ` · ${confidence}` : ''}</span>
+        <span>Cần kiểm tra{confidence ? ` (${confidence})` : ''}</span>
       </span>
     );
   }
@@ -273,14 +278,11 @@ export default function CABQPVerification({ user, onLogout }) {
   const canAdminPersons = can(user, P.PERSON_REGISTRY_ADMIN);
   const canViewAudit = can(user, P.AUDIT_VIEW);
   const canAdminUsers = can(user, P.USER_ADMIN);
-  const hasAdminMenu = canReview || canAdminUnits || canAdminPersons || canViewAudit || canAdminUsers;
 
   // App view states: 'initial' | 'loading' | 'verified' | 'needs-verification' | 'no-conclusion'
   const [appState, setAppState] = useState('initial');
   // 'search' | 'history' | 'reviews' | 'admin-units' | 'admin-persons' | 'admin-audit'
   const [currentNav, setCurrentNav] = useState('search');
-  const [isAdminMenuOpen, setIsAdminMenuOpen] = useState(false);
-  const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [activeTab, setActiveTab] = useState('manual');
   const [sidebarTab, setSidebarTab] = useState('manual');
@@ -562,7 +564,7 @@ export default function CABQPVerification({ user, onLogout }) {
     // previously processed file while its own backend result is pending.
     setExtractedData(null);
     setIsExtracting(true);
-    setUploadMessage('Đang phân tích hình ảnh/tài liệu và trích xuất thực thể...');
+    setUploadMessage('Đang phân tích hình ảnh/tài liệu và trích xuất thực thể');
     setPendingCaseId(null);
 
     if (filePreviewUrl) {
@@ -661,18 +663,18 @@ export default function CABQPVerification({ user, onLogout }) {
         extraInfo: failed
           ? `Xử lý tài liệu thất bại: ${file.name}`
           : isMultiSubject
-            ? `Tài liệu có ${blockCount} người — đây là hồ sơ số ${splitSource.block_index + 1}/${blockCount}. Hệ thống đã tự động đọc tệp: ${file.name}`
+            ? `Tài liệu có ${blockCount} người, đây là hồ sơ số ${splitSource.block_index + 1}/${blockCount}. Hệ thống đã tự động đọc tệp: ${file.name}`
             : ex
               ? `Hệ thống đã tự động đọc tệp: ${file.name}`
               : `Chưa trích xuất được thực thể từ: ${file.name} (vui lòng nhập tay hoặc thử lại)`,
         confidence:
           evidence?.parse_confidence != null
             ? `${Math.round(evidence.parse_confidence * 100)}%`
-            : '—',
+            : 'Chưa có',
         extractionCompleteness:
           ex?.extraction_confidence != null
             ? `${Math.round(ex.extraction_confidence * 100)}%`
-            : '—',
+            : 'Chưa có',
         parseMethod: evidence?.parse_method || 'PARSER',
         qualityGate: evidence?.parse_quality?.gate_result || null,
         docType: file.type?.startsWith('image/')
@@ -700,7 +702,7 @@ export default function CABQPVerification({ user, onLogout }) {
         failed
           ? `Xử lý tài liệu thất bại: ${file.name}`
           : isMultiSubject
-            ? `Tài liệu "${file.name}" có ${blockCount} người — hệ thống đã tách thành ${blockCount} hồ sơ riêng biệt. Xem tại mục Lịch sử.`
+            ? `Tài liệu "${file.name}" có ${blockCount} người. Hệ thống đã tách thành ${blockCount} hồ sơ riêng biệt. Xem tại mục Lịch sử.`
             : `Đã xử lý tài liệu: ${file.name}`
       );
       setIsOcrModalOpen(true);
@@ -925,153 +927,28 @@ export default function CABQPVerification({ user, onLogout }) {
   };
 
   return (
-    <div className="h-screen w-full flex flex-col relative bg-slate-50 text-slate-900 font-sans antialiased select-none overflow-hidden">
-      {/* Background Decorative Grid and Gradients */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#c8102e08_1px,transparent_1px),linear-gradient(to_bottom,#c8102e08_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
-      <div className="absolute -top-32 -right-32 w-[650px] h-[650px] rounded-full bg-red-500/5 blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-32 -left-32 w-[550px] h-[550px] rounded-full bg-red-500/4 blur-3xl pointer-events-none" />
-
-      {/* Header */}
-      <header className="h-[60px] sm:h-[64px] flex-shrink-0 bg-white border-b border-slate-200 px-4 sm:px-6 md:px-8 flex items-center justify-between z-40 transition-all">
-        {/* Brand Left - Full Brand Logo */}
-        <div
-          className="flex items-center cursor-pointer group flex-shrink-0 py-1 border-l-[3px] border-[#c8102e] pl-3"
-          onClick={() => {
-            setAppState('initial');
-            setCurrentNav('search');
-          }}
-          title="Quay lại trang chủ tra cứu"
-        >
-          <div className="hidden sm:block leading-tight">
-            <strong className="block text-slate-900 text-[13px] font-bold uppercase tracking-wide">Hệ thống xác minh nhân sự</strong>
-            <span className="block text-slate-500 text-[11px]">Bộ Công An – Bộ Quốc Phòng</span>
-          </div>
-        </div>
-
-        {/* Navigation & User Menu */}
-        <div className="flex items-center gap-3 sm:gap-8 h-full flex-shrink-0">
-          <nav className="flex items-center gap-3 sm:gap-7 h-full">
-            <button
-              type="button"
-              onClick={() => {
-                setCurrentNav('search');
-              }}
-              className={`relative flex items-center gap-1.5 sm:gap-2 h-full text-sm sm:text-base font-semibold transition-colors cursor-pointer py-2 ${
-                currentNav === 'search' ? 'text-red-600' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Search className="w-4 h-4" />
-              <span>Tra cứu</span>
-              {currentNav === 'search' && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-red-600 rounded-t-sm" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setCurrentNav('history');
-              }}
-              className={`relative flex items-center gap-1.5 sm:gap-2 h-full text-sm sm:text-base font-semibold transition-colors cursor-pointer py-2 ${
-                currentNav === 'history' ? 'text-red-600' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Clock className="w-4 h-4" />
-              <span>Lịch sử</span>
-              <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">
-                {historyList.length}
-              </span>
-              {currentNav === 'history' && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-red-600 rounded-t-sm" />
-              )}
-            </button>
-
-            {hasAdminMenu && (
-              <div className="relative h-full">
-                <button
-                  type="button"
-                  onClick={() => setIsAdminMenuOpen((x) => !x)}
-                  className={`relative flex items-center gap-1.5 sm:gap-2 h-full text-sm sm:text-base font-semibold transition-colors cursor-pointer py-2 ${
-                    currentNav.startsWith('admin') || currentNav === 'reviews'
-                      ? 'text-red-600'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>Quản trị</span>
-                  <ChevronDown className="w-3.5 h-3.5" />
-                  {(currentNav.startsWith('admin') || currentNav === 'reviews') && (
-                    <span className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-red-600 rounded-t-sm" />
-                  )}
-                </button>
-                {isAdminMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-md border border-slate-200 shadow-xl py-1.5 z-50">
-                    {[
-                      { nav: 'reviews', label: 'Hàng đợi đối soát', allowed: canReview },
-                      { nav: 'admin-units', label: 'Danh mục đơn vị', allowed: canAdminUnits },
-                      { nav: 'admin-persons', label: 'Danh mục cá nhân', allowed: canAdminPersons },
-                      { nav: 'admin-audit', label: 'Nhật ký kiểm toán', allowed: canViewAudit },
-                      { nav: 'admin-users', label: 'Quản trị tài khoản', allowed: canAdminUsers },
-                    ]
-                      .filter((entry) => entry.allowed)
-                      .map((entry) => (
-                        <button
-                          key={entry.nav}
-                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                          onClick={() => { setCurrentNav(entry.nav); setIsAdminMenuOpen(false); }}
-                        >
-                          {entry.label}
-                        </button>
-                      ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </nav>
-
-          <div className="hidden sm:block h-7 w-[1px] bg-slate-200" />
-
-          {/* Account Area */}
-          <div className="relative">
-            <button
-              onClick={() => setIsAccountOpen(!isAccountOpen)}
-              className="flex items-center gap-2 sm:gap-3 py-1.5 px-2 rounded-md hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-left group cursor-pointer"
-            >
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-red-100 text-red-600 font-bold text-xs flex items-center justify-center border border-red-200 shadow-xs flex-shrink-0">
-                {(user?.displayName || user?.username || '??').slice(0, 2).toUpperCase()}
-              </div>
-              <div className="hidden md:block">
-                <div className="text-sm font-semibold text-slate-900 group-hover:text-red-600 leading-tight">
-                  {user?.displayName || user?.username || 'Người dùng'}
-                </div>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  {Array.from(roles).filter((r) => ROLE_LABELS[r]).map((r) => ROLE_LABELS[r]).join(', ') || 'Đã đăng nhập'}
-                </div>
-              </div>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-0.5" />
-            </button>
-
-            {/* Account Dropdown */}
-            {isAccountOpen && (
-              <div className="absolute right-0 mt-2 w-64 bg-white rounded-md border border-slate-200 shadow-xl py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
-                <div className="px-4 py-2 border-b border-slate-100">
-                  <p className="text-sm font-bold text-slate-900">{user?.displayName || user?.username}</p>
-                  <p className="text-xs text-slate-500">{user?.username}</p>
-                </div>
-                <div className="border-t border-slate-100 pt-1">
-                  <button
-                    className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2.5"
-                    onClick={() => onLogout && onLogout()}
-                  >
-                    <LogOut className="w-4 h-4" />
-                    Đăng xuất hệ thống
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
+    <div className="h-screen w-full flex flex-col bg-slate-100 text-slate-900 font-sans antialiased select-none overflow-hidden">
+      <AppHeader
+        user={user}
+        roleLabel={ROLE_LABELS[['ADMIN', 'REVIEWER', 'USER'].find((r) => roles.has(r))] || 'Cán bộ nghiệp vụ'}
+        onHome={() => {
+          setAppState('initial');
+          setCurrentNav('search');
+        }}
+        onLogout={onLogout}
+      />
+      <AppNavigation
+        currentNav={currentNav}
+        onNavigate={setCurrentNav}
+        historyCount={historyList.length}
+        adminEntries={[
+          { nav: 'reviews', label: 'Hàng đợi đối soát', allowed: canReview },
+          { nav: 'admin-units', label: 'Danh mục đơn vị', allowed: canAdminUnits },
+          { nav: 'admin-persons', label: 'Danh mục cá nhân', allowed: canAdminPersons },
+          { nav: 'admin-audit', label: 'Nhật ký kiểm toán', allowed: canViewAudit },
+          { nav: 'admin-users', label: 'Quản trị tài khoản', allowed: canAdminUsers },
+        ].filter((entry) => entry.allowed)}
+      />
 
       {/* Main Body */}
       <main className="flex-1 w-full flex flex-col relative z-10 overflow-hidden min-h-0">
@@ -1096,49 +973,38 @@ export default function CABQPVerification({ user, onLogout }) {
             }}
           />
         ) : appState === 'initial' ? (
-          <div className="w-full max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-6 flex-1 flex flex-col justify-center my-auto min-h-0 overflow-hidden">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-              {/* Left Hero Area & Search Card */}
-              <div className="lg:col-span-7 flex flex-col justify-center">
-                <div className="mb-2 sm:mb-3">
-                  <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold text-slate-900 leading-tight tracking-tight">
-                    Tra cứu đối tượng <span className="text-red-600">CA/BQP</span>
-                  </h1>
-                  <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-[540px] leading-relaxed">
-                    Nhập thông tin hoặc tải tài liệu để hệ thống phân tích và xác minh phạm vi quản lý nghiệp vụ theo quy chuẩn liên ngành 2026.
-                  </p>
-                </div>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <PageContainer className="py-3 sm:py-4">
+              <PageHeader
+                trail={[{ label: 'Trang chủ' }]}
+                title="Tra cứu đối tượng CA/BQP"
+                description="Nhập thông tin hoặc tải tài liệu để xác định đơn vị công tác thuộc Bộ Công an hay Bộ Quốc phòng."
+                icon={Search}
+              />
 
-                {/* Search Form Card */}
-                <div className="w-full max-w-[540px] bg-white rounded-md border border-slate-200 shadow-xs p-3.5 sm:p-4">
-                  {/* Form Tab Switcher */}
-                  <div className="flex items-center p-1 bg-slate-100 rounded-md mb-2.5 border border-slate-200/70">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('manual')}
-                      className={`flex-1 py-1.5 px-3 rounded-md text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                        activeTab === 'manual'
-                          ? 'bg-white text-red-600 shadow-xs border border-slate-200'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-red-600 text-xs leading-none flex items-center">edit</span>
-                      <span>Nhập thông tin</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('upload')}
-                      className={`flex-1 py-1.5 px-3 rounded-md text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                        activeTab === 'upload'
-                          ? 'bg-white text-red-600 shadow-xs border border-slate-200'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-red-600 text-xs leading-none flex items-center">upload_file</span>
-                      <span>Tải tài liệu</span>
-                    </button>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+                <section className="lg:col-span-8 bg-white border border-slate-200 rounded-md shadow-xs p-3 sm:p-4">
+                  <div className="flex border-b border-slate-200 -mx-3 sm:-mx-4 px-3 sm:px-4 mb-3">
+                    {[
+                      { id: 'manual', label: 'Nhập thông tin', icon: Edit3 },
+                      { id: 'upload', label: 'Tải tài liệu', icon: UploadCloud },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`flex items-center gap-1.5 px-3.5 pt-1.5 pb-2 mr-1 text-xs sm:text-[13px] font-semibold border-b-2 transition-colors cursor-pointer ${
+                          activeTab === tab.id
+                            ? 'text-red-600 border-red-600 bg-red-50/70'
+                            : 'text-slate-600 border-transparent hover:text-slate-900'
+                        }`}
+                      >
+                        <tab.icon className="w-4 h-4" />
+                        <span>{tab.label}</span>
+                      </button>
+                    ))}
                   </div>
+
 
                   {activeTab === 'manual' ? (
                     <form onSubmit={handleSearch} noValidate>
@@ -1176,11 +1042,11 @@ export default function CABQPVerification({ user, onLogout }) {
                           rows={6}
                           value={formValues.queryText}
                           onChange={handleInputChange}
-                          placeholder="Ví dụ: Nguyễn Văn A, sinh năm 1985, số hiệu 012345, hiện công tác tại..."
+                          placeholder="Ví dụ: Nguyễn Văn A, sinh năm 1985, số hiệu 012345, hiện công tác tại"
                           className={`w-full min-h-[150px] resize-y rounded-md border bg-white p-3.5 text-sm leading-6 text-slate-900 outline-none transition-all ${
                             errors.queryText
-                              ? 'border-red-400 focus:ring-2 focus:ring-red-100'
-                              : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100'
+                              ? 'border-red-400 focus:ring-1 focus:ring-red-500'
+                              : 'border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500'
                           }`}
                         />
                         {errors.queryText && <p className="mt-1 text-xs font-medium text-red-500">{errors.queryText}</p>}
@@ -1204,11 +1070,11 @@ export default function CABQPVerification({ user, onLogout }) {
                           name="fullName"
                           value={formValues.fullName}
                           onChange={handleInputChange}
-                          placeholder="Nhập họ và tên đối tượng..."
+                          placeholder="Nhập họ và tên đối tượng"
                           className={`w-full h-8.5 sm:h-9 px-3 rounded-md border text-xs sm:text-sm bg-white transition-all outline-none ${
                             errors.fullName
-                              ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600'
-                              : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
+                              ? 'border-red-500 focus:ring-1 focus:ring-red-500 text-red-600'
+                              : 'border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-slate-900'
                           }`}
                         />
                         {errors.fullName && (
@@ -1229,12 +1095,12 @@ export default function CABQPVerification({ user, onLogout }) {
                             name="birthYear"
                             value={formValues.birthYear}
                             onChange={handleInputChange}
-                            placeholder="Năm sinh (VD: 1990)..."
+                            placeholder="Năm sinh (VD: 1990)"
                             maxLength={5}
                             className={`w-full h-8.5 sm:h-9 px-3 rounded-md border text-xs sm:text-sm bg-white transition-all outline-none ${
                               errors.birthYear
-                                ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600 bg-red-50/20'
-                                : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
+                                ? 'border-red-500 focus:ring-1 focus:ring-red-500 text-red-600 bg-red-50/20'
+                                : 'border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-slate-900'
                             }`}
                           />
                           {errors.birthYear && (
@@ -1254,8 +1120,8 @@ export default function CABQPVerification({ user, onLogout }) {
                             name="position"
                             value={formValues.position}
                             onChange={handleInputChange}
-                            placeholder="Chức vụ / Vị trí công tác..."
-                            className="w-full h-8.5 sm:h-9 px-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-xs sm:text-sm bg-white text-slate-900 transition-all outline-none"
+                            placeholder="Chức vụ / Vị trí công tác"
+                            className="w-full h-8.5 sm:h-9 px-3 rounded-md border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-xs sm:text-sm bg-white text-slate-900 transition-all outline-none"
                           />
                         </div>
                       </div>
@@ -1273,15 +1139,14 @@ export default function CABQPVerification({ user, onLogout }) {
                               name="department"
                               value={formValues.department}
                               onChange={handleInputChange}
-                              placeholder="Nhập hoặc chọn đơn vị..."
+                              placeholder="Nhập hoặc chọn đơn vị"
                               className={`w-full h-8.5 sm:h-9 px-3 pr-8 rounded-md border text-xs sm:text-sm bg-white transition-all outline-none ${
                                 errors.department
-                                  ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600'
-                                  : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
+                                  ? 'border-red-500 focus:ring-1 focus:ring-red-500 text-red-600'
+                                  : 'border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-slate-900'
                               }`}
                             />
                             <datalist id="department-options">
-                              <option value="Đơn vị X - Cục CSDT (Bộ Công an)" />
                               <option value="Công an quận Hoàng Mai (Hà Nội)" />
                               <option value="Học viện An ninh Nhân dân" />
                               <option value="Quân khu 7 (Bộ Quốc phòng)" />
@@ -1291,7 +1156,6 @@ export default function CABQPVerification({ user, onLogout }) {
                               <option value="Cục Cảnh sát Hình sự (C02)" />
                               <option value="Công an TP Hà Nội" />
                               <option value="Công an TP Hồ Chí Minh" />
-                              <option value="Đơn vị dân sự ngoài ngành" />
                             </datalist>
                             <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none text-slate-400">
                               <Building2 className="w-3.5 h-3.5" />
@@ -1311,11 +1175,11 @@ export default function CABQPVerification({ user, onLogout }) {
                             name="identifier"
                             value={formValues.identifier}
                             onChange={handleInputChange}
-                            placeholder="Số hiệu / Mã định danh / CCCD..."
+                            placeholder="Số hiệu / Mã định danh / CCCD"
                             className={`w-full h-8.5 sm:h-9 px-3 rounded-md border text-xs sm:text-sm bg-white transition-all outline-none uppercase ${
                               errors.identifier
-                                ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600'
-                                : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
+                                ? 'border-red-500 focus:ring-1 focus:ring-red-500 text-red-600'
+                                : 'border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-slate-900'
                             }`}
                           />
                           {errors.identifier && (
@@ -1334,8 +1198,8 @@ export default function CABQPVerification({ user, onLogout }) {
                           rows={2}
                           value={formValues.extraInfo}
                           onChange={handleInputChange}
-                          placeholder="Nhập số quyết định, phân công, ghi chú hồ sơ vụ việc hoặc dấu hiệu nghiệp vụ khác..."
-                          className="w-full h-15 sm:h-16 p-2.5 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-xs sm:text-sm bg-white text-slate-900 transition-all outline-none resize-none leading-relaxed"
+                          placeholder="Nhập số quyết định, phân công, ghi chú hồ sơ vụ việc hoặc dấu hiệu nghiệp vụ khác"
+                          className="w-full h-15 sm:h-16 p-2.5 rounded-md border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-xs sm:text-sm bg-white text-slate-900 transition-all outline-none resize-none leading-relaxed"
                         />
                       </div>
                       </div>
@@ -1404,7 +1268,7 @@ export default function CABQPVerification({ user, onLogout }) {
                               <Scan className="w-4 h-4 text-red-600" />
                             </div>
                             <div>
-                              <p className="text-[13px] font-bold text-red-900">Đang đọc nội dung tài liệu...</p>
+                              <p className="text-[13px] font-bold text-red-900">Đang đọc nội dung tài liệu</p>
                               <p className="text-[11.5px] text-slate-500">Trích xuất: Họ tên, Năm sinh, Đơn vị, Chức vụ</p>
                             </div>
                           </div>
@@ -1447,11 +1311,11 @@ export default function CABQPVerification({ user, onLogout }) {
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5 text-[11.5px]">
                                 <div className="bg-white px-2 py-1 rounded border border-slate-200">
                                   <span className="text-slate-400 text-[10px] block">Họ tên:</span>
-                                  <span className="font-bold text-slate-900 truncate block">{formValues.fullName || '—'}</span>
+                                  <span className="font-bold text-slate-900 truncate block">{formValues.fullName || 'Chưa có'}</span>
                                 </div>
                                 <div className="bg-white px-2 py-1 rounded border border-slate-200">
                                   <span className="text-slate-400 text-[10px] block">Đơn vị:</span>
-                                  <span className="font-bold text-slate-900 truncate block">{formValues.department || '—'}</span>
+                                  <span className="font-bold text-slate-900 truncate block">{formValues.department || 'Chưa có'}</span>
                                 </div>
                               </div>
 
@@ -1533,99 +1397,19 @@ export default function CABQPVerification({ user, onLogout }) {
                       </div>
                     </div>
                   )}
-                </div>
+                </section>
+
+                <RecentCasesPanel
+                  items={historyList}
+                  onOpen={handleSelectHistoryCase}
+                  onShowAll={() => setCurrentNav('history')}
+                />
               </div>
-
-              {/* Right Hero Illustration */}
-              <div className="lg:col-span-5 flex flex-col items-center justify-center relative select-none pointer-events-none mt-4 lg:mt-0">
-                <div className="relative w-full max-w-[280px] sm:max-w-[340px] lg:max-w-[370px] h-[180px] sm:h-[220px] lg:h-[240px] flex items-center justify-center">
-                  {/* Geometric backdrops */}
-                  <div className="absolute -top-4 -right-4 w-[320px] h-[240px] rounded-[48%] bg-red-100/40 opacity-60 blur-2xl" />
-                  <div className="absolute top-8 right-2 w-[260px] h-[180px] bg-red-200/30 rounded-md transform rotate-6" />
-
-                  <svg className="relative z-10 w-full h-full max-w-[440px]" viewBox="0 0 500 420" fill="none">
-                    <defs>
-                      <linearGradient id="sheetGrad" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stopColor="#FFFFFF" />
-                        <stop offset="100%" stopColor="#F8FAFC" />
-                      </linearGradient>
-                      <filter id="softCardShadow" x="-10%" y="-10%" width="120%" height="130%">
-                        <feDropShadow dx="0" dy="8" stdDeviation="12" floodColor="#1e4882" floodOpacity="0.08" />
-                      </filter>
-                    </defs>
-
-                    {/* Back Document Sheet (Tilted) */}
-                    <g transform="rotate(-6 230 200)" filter="url(#softCardShadow)">
-                      <rect x="130" y="70" width="220" height="290" rx="10" fill="url(#sheetGrad)" stroke="#CBD5E1" strokeWidth="1.5" />
-                      <rect x="155" y="95" width="80" height="10" rx="3" fill="#E2E8F0" />
-                      <rect x="155" y="120" width="170" height="6" rx="2" fill="#F1F5F9" />
-                      <rect x="155" y="136" width="150" height="6" rx="2" fill="#F1F5F9" />
-                      <rect x="155" y="152" width="130" height="6" rx="2" fill="#F1F5F9" />
-                    </g>
-
-                    {/* Middle Document Sheet */}
-                    <g transform="rotate(3 250 210)" filter="url(#softCardShadow)">
-                      <rect x="150" y="80" width="230" height="290" rx="10" fill="#FFFFFF" stroke="#CBD5E1" strokeWidth="1.5" />
-                      <rect x="175" y="105" width="100" height="12" rx="4" fill="#c8102e" opacity="0.15" />
-                      <rect x="175" y="130" width="180" height="7" rx="2" fill="#E2E8F0" />
-                      <rect x="175" y="146" width="160" height="7" rx="2" fill="#F1F5F9" />
-                      <circle cx="340" cy="115" r="14" stroke="#c8102e" strokeWidth="1.2" strokeOpacity="0.3" strokeDasharray="3 3" />
-                      <path d="M 334 115 L 338 119 L 347 110" stroke="#c8102e" strokeWidth="1.5" strokeOpacity="0.6" />
-                    </g>
-
-                    {/* Front Verification Card */}
-                    <g filter="url(#softCardShadow)">
-                      <rect x="110" y="110" width="260" height="250" rx="10" fill="#FFFFFF" stroke="#94A3B8" strokeWidth="1.5" />
-                      <rect x="110" y="110" width="260" height="42" rx="10" fill="#F8FAFC" />
-                      <line x1="110" y1="152" x2="370" y2="152" stroke="#E2E8F0" strokeWidth="1" />
-                      <rect x="126" y="122" width="18" height="18" rx="4" fill="#c8102e" />
-                      <path d="M 132 131 L 134.5 133.5 L 140 128" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                      <text x="152" y="136" fill="#0F172A" fontSize="11" fontWeight="bold">HỒ SƠ ĐỐI CHIẾU NGHIỆP VỤ</text>
-                      <rect x="315" y="123" width="42" height="16" rx="8" fill="#ECFDF3" stroke="#BFE8CD" strokeWidth="1" />
-                      <text x="323" y="134" fill="#16A34A" fontSize="9" fontWeight="bold">CHUẨN</text>
-
-                      {/* Row specs */}
-                      <g transform="translate(126, 170)">
-                        <rect x="0" y="0" width="60" height="6" rx="2" fill="#94A3B8" opacity="0.6" />
-                        <rect x="80" y="0" width="120" height="6" rx="2" fill="#1E293B" opacity="0.8" />
-                        <rect x="0" y="20" width="45" height="6" rx="2" fill="#94A3B8" opacity="0.6" />
-                        <rect x="80" y="20" width="80" height="6" rx="2" fill="#1E293B" opacity="0.8" />
-                        <rect x="0" y="40" width="55" height="6" rx="2" fill="#94A3B8" opacity="0.6" />
-                        <rect x="80" y="40" width="140" height="6" rx="2" fill="#c8102e" opacity="0.9" />
-                        <rect x="0" y="70" width="228" height="34" rx="6" fill="#F0FDF4" stroke="#DCFCE7" strokeWidth="1" />
-                        <circle cx="18" cy="87" r="6" fill="#16A34A" />
-                        <path d="M 15 87 L 17 89 L 21 85" stroke="#FFFFFF" strokeWidth="1.2" />
-                        <text x="32" y="91" fill="#0F172A" fontSize="10" fontWeight="600">Định danh khớp 100% tiêu chuẩn</text>
-                      </g>
-                    </g>
-
-                    {/* Magnifying Glass */}
-                    <g filter="url(#softCardShadow)">
-                      <circle cx="330" cy="270" r="52" fill="none" stroke="#c8102e" strokeWidth="6" />
-                      <circle cx="330" cy="270" r="46" fill="#c8102e" fillOpacity="0.05" stroke="#E2E8F0" strokeWidth="1" />
-                      <path d="M 295 250 A 44 44 0 0 1 345 230" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" opacity="0.8" />
-                      <g transform="translate(310, 252)">
-                        <rect x="0" y="0" width="40" height="36" rx="6" fill="#FFFFFF" stroke="#c8102e" strokeWidth="1.5" />
-                        <path d="M 10 16 L 17 23 L 30 10" stroke="#16A34A" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
-                      </g>
-                      <line x1="370" y1="310" x2="435" y2="375" stroke="#9e0b22" strokeWidth="12" strokeLinecap="round" />
-                      <line x1="373" y1="313" x2="432" y2="372" stroke="#1E293B" strokeWidth="6" strokeLinecap="round" />
-                    </g>
-                  </svg>
-                </div>
-
-                <div className="text-center mt-2.5 sm:mt-3">
-                  <p className="text-[14px] sm:text-[14.5px] italic font-semibold text-slate-800">
-                    “Tra cứu nhanh – Chính xác – Bảo mật”
-                  </p>
-                  <p className="text-[12px] sm:text-[12.5px] text-slate-500 mt-0.5">Phục vụ công tác quản lý và an sinh</p>
-                </div>
-              </div>
-            </div>
+            </PageContainer>
           </div>
         ) : (
           /* Two-Column Workspace Layout for Loading & Result States */
-          <div className="max-w-[1536px] w-full mx-auto px-2.5 sm:px-6 md:px-8 py-2 sm:py-3 flex-1 flex flex-col lg:flex-row gap-3.5 lg:gap-4.5 min-h-0 overflow-y-auto lg:overflow-hidden lg:h-full">
+          <div className="max-w-[1480px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-3 flex-1 flex flex-col lg:flex-row gap-3 min-h-0 overflow-y-auto lg:overflow-hidden lg:h-full">
             {/* Mobile Toggle for Search Form (< lg) */}
             <div className="flex-shrink-0 lg:hidden w-full">
               <button
@@ -1701,11 +1485,11 @@ export default function CABQPVerification({ user, onLogout }) {
                       rows={8}
                       value={formValues.queryText}
                       onChange={handleInputChange}
-                      placeholder="Nhập tên, mã cá nhân, đơn vị, chức vụ hoặc nội dung mô tả..."
+                      placeholder="Nhập tên, mã cá nhân, đơn vị, chức vụ hoặc nội dung mô tả"
                       className={`w-full min-h-[190px] resize-y rounded-md border bg-white p-3 text-[13.5px] leading-6 text-slate-900 outline-none transition-all ${
                         errors.queryText
-                          ? 'border-red-400 focus:ring-2 focus:ring-red-100'
-                          : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100'
+                          ? 'border-red-400 focus:ring-1 focus:ring-red-500'
+                          : 'border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500'
                       }`}
                     />
                     {errors.queryText && <p className="mt-1 text-[11.5px] font-medium text-red-500">{errors.queryText}</p>}
@@ -1725,7 +1509,7 @@ export default function CABQPVerification({ user, onLogout }) {
                       value={formValues.fullName}
                       onChange={handleInputChange}
                       placeholder="Nhập họ và tên"
-                      className="w-full h-10 px-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13.5px] bg-white text-slate-900 outline-none"
+                      className="w-full h-10 px-3 rounded-md border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-[13.5px] bg-white text-slate-900 outline-none"
                     />
                   </div>
 
@@ -1737,12 +1521,12 @@ export default function CABQPVerification({ user, onLogout }) {
                         name="birthYear"
                         value={formValues.birthYear}
                         onChange={handleInputChange}
-                        placeholder="Năm sinh..."
+                        placeholder="Năm sinh"
                         maxLength={5}
                         className={`w-full h-10 px-3 rounded-md border text-[13.5px] bg-white outline-none transition-all ${
                           errors.birthYear
-                            ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600 bg-red-50/20'
-                            : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
+                            ? 'border-red-500 focus:ring-1 focus:ring-red-500 text-red-600 bg-red-50/20'
+                            : 'border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-slate-900'
                         }`}
                       />
                       {errors.birthYear && (
@@ -1759,8 +1543,8 @@ export default function CABQPVerification({ user, onLogout }) {
                         name="position"
                         value={formValues.position}
                         onChange={handleInputChange}
-                        placeholder="Chức vụ..."
-                        className="w-full h-10 px-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13.5px] bg-white text-slate-900 outline-none"
+                        placeholder="Chức vụ"
+                        className="w-full h-10 px-3 rounded-md border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-[13.5px] bg-white text-slate-900 outline-none"
                       />
                     </div>
                   </div>
@@ -1774,17 +1558,15 @@ export default function CABQPVerification({ user, onLogout }) {
                         name="department"
                         value={formValues.department}
                         onChange={handleInputChange}
-                        placeholder="Nhập hoặc chọn đơn vị..."
-                        className="w-full h-10 px-3 pr-7 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13.5px] bg-white text-slate-900 outline-none"
+                        placeholder="Nhập hoặc chọn đơn vị"
+                        className="w-full h-10 px-3 pr-7 rounded-md border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-[13.5px] bg-white text-slate-900 outline-none"
                       />
                       <datalist id="sidebar-department-options">
-                        <option value="Đơn vị X - Cục CSDT (Bộ Công an)" />
                         <option value="Công an quận Hoàng Mai (Hà Nội)" />
                         <option value="Học viện An ninh Nhân dân" />
                         <option value="Quân khu 7 (Bộ Quốc phòng)" />
                         <option value="Bộ Tư lệnh Cảnh sát Cơ động" />
                         <option value="Cục Tác chiến - BQP" />
-                        <option value="Đơn vị dân sự ngoài ngành" />
                       </datalist>
                       <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none text-slate-400">
                         <ChevronDown className="w-3.5 h-3.5" />
@@ -1801,8 +1583,8 @@ export default function CABQPVerification({ user, onLogout }) {
                       name="identifier"
                       value={formValues.identifier}
                       onChange={handleInputChange}
-                      placeholder="Số hiệu / Mã định danh..."
-                      className="w-full h-10 px-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13.5px] bg-white text-slate-900 outline-none uppercase"
+                      placeholder="Số hiệu / Mã định danh"
+                      className="w-full h-10 px-3 rounded-md border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-[13.5px] bg-white text-slate-900 outline-none uppercase"
                     />
                   </div>
 
@@ -1813,8 +1595,8 @@ export default function CABQPVerification({ user, onLogout }) {
                       value={formValues.extraInfo}
                       onChange={handleInputChange}
                       rows={2}
-                      placeholder="Ghi chú hồ sơ hoặc quyết định..."
-                      className="w-full p-2.5 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13px] bg-white text-slate-900 outline-none resize-none"
+                      placeholder="Ghi chú hồ sơ hoặc quyết định"
+                      className="w-full p-2.5 rounded-md border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-[13px] bg-white text-slate-900 outline-none resize-none"
                     />
                   </div>
                   </div>
@@ -1880,7 +1662,7 @@ export default function CABQPVerification({ user, onLogout }) {
                         <div className="w-8 h-8 rounded-full border-2 border-red-600 border-t-transparent animate-spin flex items-center justify-center">
                           <Scan className="w-4 h-4 text-red-600" />
                         </div>
-                        <p className="text-[12px] font-bold text-red-900">Đang đọc nội dung tài liệu...</p>
+                        <p className="text-[12px] font-bold text-red-900">Đang đọc nội dung tài liệu</p>
                       </div>
                     ) : uploadedFile ? (
                       <div className="space-y-2 text-left">
@@ -1905,11 +1687,11 @@ export default function CABQPVerification({ user, onLogout }) {
                         <div className="p-2 rounded bg-white border border-slate-200 text-[11.5px] space-y-1">
                           <div className="flex justify-between">
                             <span className="text-slate-500">Họ tên:</span>
-                            <span className="font-bold text-slate-900 truncate">{formValues.fullName || '—'}</span>
+                            <span className="font-bold text-slate-900 truncate">{formValues.fullName || 'Chưa có'}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">Đơn vị:</span>
-                            <span className="font-bold text-slate-900 truncate max-w-[130px]">{formValues.department || '—'}</span>
+                            <span className="font-bold text-slate-900 truncate max-w-[130px]">{formValues.department || 'Chưa có'}</span>
                           </div>
                         </div>
 
@@ -1985,9 +1767,9 @@ export default function CABQPVerification({ user, onLogout }) {
                   <div className="h-3.5 w-[1px] bg-slate-200" />
 
                   <span className="font-mono text-slate-900 font-bold text-[12.5px]">
-                    {currentCaseData?.case_code || '—'}
+                    {currentCaseData?.case_code || 'Chưa có'}
                   </span>
-                  <span className="hidden sm:inline text-slate-300">|</span>
+                  <span className="hidden sm:inline h-3.5 w-[1px] bg-slate-200" />
                   <span className="hidden sm:inline text-[11.5px] text-slate-500">
                     {new Date().toLocaleDateString('vi-VN')}
                   </span>
@@ -2031,19 +1813,16 @@ export default function CABQPVerification({ user, onLogout }) {
                         </span>
                         <span className="text-[13px] font-semibold text-slate-900 min-w-[280px] text-left">
                           {loadingProgress < 33
-                            ? 'Tiếp nhận và kiểm tra thông tin hồ sơ...'
+                            ? 'Tiếp nhận và kiểm tra thông tin hồ sơ'
                             : loadingProgress < 66
-                            ? 'Đang nhận dạng thông tin nhân sự...'
-                            : 'Đối soát chéo với Danh mục Đơn vị Gốc...'}
-                        </span>
-                        <span className="text-[11.5px] font-bold text-red-700 bg-white border border-red-200 px-2 py-0.5 rounded-md font-mono shadow-2xs">
-                          {Math.round(loadingProgress)}%
+                            ? 'Nhận dạng thông tin nhân sự'
+                            : 'Đối chiếu với danh mục đơn vị'}
                         </span>
                       </div>
 
-                      <h2 className="text-[26px] font-bold text-slate-900">Đang phân tích thông tin...</h2>
+                      <h2 className="text-[20px] font-bold text-slate-900">Đang phân tích thông tin</h2>
                       <p className="text-[14.5px] text-slate-500 mt-1.5 leading-relaxed">
-                        Hệ thống đang tiếp nhận, trích xuất và đối chiếu dữ liệu để xác định kết quả thẩm định theo tiêu chuẩn đồng bộ 2026.
+                        Hệ thống đang tiếp nhận, trích xuất và đối chiếu dữ liệu để xác định kết quả.
                       </p>
                     </div>
 
@@ -2238,9 +2017,13 @@ export default function CABQPVerification({ user, onLogout }) {
                             </div>
                             <div className="py-2.5 flex justify-between items-center">
                               <span className="text-slate-500 font-medium">Mã định danh</span>
-                              <span className="font-mono text-red-700 font-bold bg-red-50 px-2 py-0.5 rounded border border-red-200 text-[12.5px]">
-                                {formValues.identifier || '—'}
-                              </span>
+                              {formValues.identifier ? (
+                                <span className="font-mono text-red-700 font-bold bg-red-50 px-2 py-0.5 rounded border border-red-200 text-[12.5px]">
+                                  {formValues.identifier}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 font-medium">Chưa có dữ liệu</span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2270,7 +2053,7 @@ export default function CABQPVerification({ user, onLogout }) {
                           {(subjectGroupMethod || taxonomyVersion) && (
                             <div className="px-5 pb-1 text-[11.5px] text-slate-500 leading-snug">
                               {subjectGroupMethod && (SUBJECT_GROUP_METHOD_LABELS[subjectGroupMethod] || subjectGroupMethod)}
-                              {taxonomyVersion && <span className="ml-1 text-slate-400">· Bộ tiêu chí {taxonomyVersion}</span>}
+                              {taxonomyVersion && <span className="ml-1 text-slate-400">(bộ tiêu chí {taxonomyVersion})</span>}
                             </div>
                           )}
 
@@ -2357,7 +2140,7 @@ export default function CABQPVerification({ user, onLogout }) {
                           </div>
                           <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
                             <span className="text-slate-500 text-xs block">Phiên bản danh mục:</span>
-                            <span className="font-mono font-bold text-slate-900 mt-0.5 block">{currentCaseData?.evidence?.registry_version || '—'}</span>
+                            <span className="font-mono font-bold text-slate-900 mt-0.5 block">{currentCaseData?.evidence?.registry_version || 'Chưa có'}</span>
                           </div>
                           <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
                             <span className="text-slate-500 text-xs block">Căn cứ quy định:</span>
@@ -2365,7 +2148,7 @@ export default function CABQPVerification({ user, onLogout }) {
                           </div>
                           <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
                             <span className="text-slate-500 text-xs block">Phiên bản bộ tiêu chí:</span>
-                            <span className="font-mono font-bold text-slate-900 mt-0.5 block">{taxonomyVersion || '—'}</span>
+                            <span className="font-mono font-bold text-slate-900 mt-0.5 block">{taxonomyVersion || 'Chưa có'}</span>
                           </div>
                         </div>
 
@@ -2438,11 +2221,7 @@ export default function CABQPVerification({ user, onLogout }) {
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="h-[36px] flex-shrink-0 bg-white border-t border-slate-200 px-4 sm:px-6 md:px-8 flex items-center justify-between text-[11px] sm:text-[11.5px] text-slate-500 select-none z-10">
-        <div>Hệ thống Tra cứu &amp; Thẩm định Hồ sơ Nghiệp vụ BCA / BQP — Nền tảng Thẩm định Quốc gia 2026</div>
-        <div className="hidden sm:block">Bản quyền dữ liệu nghiệp vụ — Bảo mật theo cấp độ ngành</div>
-      </footer>
+      <AppFooter />
 
       {modalLoadError && (
         <div className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-md border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800 shadow-lg">
@@ -2499,13 +2278,72 @@ export default function CABQPVerification({ user, onLogout }) {
   );
 }
 
+const RECENT_STATUS = {
+  VERIFIED: { label: 'Đã xác định', className: 'bg-emerald-100 text-emerald-800' },
+  NEED_REVIEW: { label: 'Cần xác minh', className: 'bg-amber-100 text-amber-800' },
+  NO_CONCLUSION: { label: 'Chưa có kết luận', className: 'bg-slate-100 text-slate-600' },
+};
+
+// Latest cases from the same backend-synced list the Lịch sử tab shows.
+function RecentCasesPanel({ items, onOpen, onShowAll }) {
+  const recent = items.slice(0, 8);
+  return (
+    <aside className="lg:col-span-4 bg-white border border-slate-200 rounded-md shadow-xs flex flex-col min-h-0">
+      <div className="px-3 sm:px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+        <h2 className="text-[13px] font-bold text-slate-900">Hồ sơ tra cứu gần đây</h2>
+        {items.length > 0 && (
+          <button
+            type="button"
+            onClick={onShowAll}
+            className="text-[11.5px] font-semibold text-blue-600 hover:text-blue-800 hover:underline"
+          >
+            Xem tất cả
+          </button>
+        )}
+      </div>
+      {recent.length === 0 ? (
+        <p className="px-4 py-8 text-center text-xs text-slate-400">Chưa có hồ sơ nào.</p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {recent.map((item) => {
+            const status = RECENT_STATUS[item.statusCategory] || RECENT_STATUS.NO_CONCLUSION;
+            return (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(item)}
+                  className="w-full text-left px-3 sm:px-4 py-2 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[12.5px] font-semibold text-slate-900 truncate">{item.fullName}</span>
+                      <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10.5px] font-medium ${status.className}`}>
+                        {status.label}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                      <span className="truncate">{item.department}</span>
+                      <span className="flex-shrink-0 font-mono">{item.timestamp}</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </aside>
+  );
+}
+
 // Sub-Component: Needs Verification View
 function NeedsVerificationView({ candidateName, formValues, currentCaseData, onViewOriginalDossier, onViewDetailedCompare }) {
   const [selectedRow, setSelectedRow] = useState(1);
   const [detailTab, setDetailTab] = useState('identity');
 
   const displayName = candidateName || formValues?.fullName || 'Đối tượng xác minh';
-  const displayYear = formValues?.birthYear || '—';
+  const displayYear = formValues?.birthYear || 'Chưa có';
 
   // Real candidates come from the resolver's top_candidates. The resolver takes one
   // of two shapes depending on how the search was run:
@@ -2550,13 +2388,13 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
   };
   const candidates = rawCandidates.map((c, idx) => ({
     id: idx + 1,
-    subjectName: isPersonLookup ? c.full_name || '—' : displayName,
+    subjectName: isPersonLookup ? c.full_name || 'Chưa có' : displayName,
     subjectYear: isPersonLookup ? c.birth_year || 'Chưa rõ' : displayYear,
     unitName: c.canonical_name || c.canonical_unit_name || c.unit_id || c.canonical_unit_id || 'Không rõ đơn vị',
-    unitId: c.unit_id || c.canonical_unit_id || '—',
+    unitId: c.unit_id || c.canonical_unit_id || 'Chưa có',
     orgType: c.organization_type || 'OTHER',
     orgBadgeClass: groupColors[c.organization_type] || groupColors.OTHER,
-    score: typeof c.score === 'number' ? `${Math.round(c.score)}%` : c.score ?? '—',
+    score: typeof c.score === 'number' ? `${Math.round(c.score)}%` : c.score ?? 'Chưa có',
   }));
   const selectedCandidate = candidates.find((c) => c.id === selectedRow) || candidates[0];
 
@@ -2578,7 +2416,7 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
         <div className="mb-4 rounded-md border border-red-100 bg-red-50/60 px-4 py-3 text-sm">
           <span className="text-slate-500">Thông tin đã nhập:</span>{' '}
           <strong className="text-slate-900">{displayName}</strong>
-          {displayYear !== '—' && <span className="text-slate-600"> · Năm sinh {displayYear}</span>}
+          {displayYear !== 'Chưa có' && <span className="text-slate-600">, năm sinh {displayYear}</span>}
         </div>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -2731,23 +2569,23 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
                 <span className="text-slate-500 text-[12px] block">
                   {isPersonLookup ? `Họ và tên (khớp #${selectedRow}):` : 'Họ và tên (đã nhập):'}
                 </span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.subjectName ?? '—'}</span>
+                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.subjectName ?? 'Chưa có'}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
                 <span className="text-slate-500 text-[12px] block">
                   {isPersonLookup ? 'Năm sinh (khớp):' : 'Năm sinh (đã nhập):'}
                 </span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.subjectYear ?? '—'}</span>
+                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.subjectYear ?? 'Chưa có'}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
                 <span className="text-slate-500 text-[12px] block">Mã hồ sơ:</span>
                 <span className="font-mono font-bold text-red-600 mt-0.5 block">
-                  {formValues?.identifier || currentCaseData?.case_code || '—'}
+                  {formValues?.identifier || currentCaseData?.case_code || 'Chưa có'}
                 </span>
               </div>
               <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
                 <span className="text-slate-500 text-[12px] block">Đơn vị đang xem (khớp #{selectedRow}):</span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.unitName ?? '—'}</span>
+                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.unitName ?? 'Chưa có'}</span>
               </div>
             </div>
           )}
@@ -2756,10 +2594,10 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
             <div className="p-4 bg-[#FDF0BE] border border-amber-200 rounded-md text-[13px] text-amber-900">
               <p className="font-bold">Chi tiết khớp đơn vị #{selectedRow}:</p>
               <p className="mt-1">
-                Mã đơn vị <strong>{selectedCandidate?.unitId ?? '—'}</strong>, tổ chức{' '}
+                Mã đơn vị <strong>{selectedCandidate?.unitId ?? 'Chưa có'}</strong>, tổ chức{' '}
                 <strong>{selectedCandidate?.orgType ?? 'chưa xác định'}</strong>, mức độ phù hợp{' '}
-                <strong>{selectedCandidate?.score ?? '—'}</strong>. Có nhiều hơn một đơn vị khớp tên nên hệ thống
-                không tự động kết luận CA/BQP — cần thẩm định thủ công để chọn đúng đơn vị công tác hiện tại.
+                <strong>{selectedCandidate?.score ?? 'Chưa có'}</strong>. Có nhiều hơn một đơn vị khớp tên nên hệ thống
+                không tự động kết luận CA/BQP. Cần thẩm định thủ công để chọn đúng đơn vị công tác hiện tại.
               </p>
             </div>
           )}
@@ -2771,7 +2609,7 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
                   {currentCaseData?.subject_group_method &&
                     (SUBJECT_GROUP_METHOD_LABELS[currentCaseData.subject_group_method] || currentCaseData.subject_group_method)}
                   {currentCaseData?.taxonomy_version && (
-                    <span className="ml-1 text-slate-400">· Bộ tiêu chí {currentCaseData.taxonomy_version}</span>
+                    <span className="ml-1 text-slate-400">(bộ tiêu chí {currentCaseData.taxonomy_version})</span>
                   )}
                 </p>
               )}
@@ -2783,7 +2621,7 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
                         <span className="font-medium">
                           {e.policy_id}{e.policy_version && <span className="font-mono text-[10.5px] text-slate-400 ml-1">v{e.policy_version}</span>}
                         </span>
-                        <span className="text-slate-500">{POLICY_STATUS_LABELS[e.status] || 'Chưa xác định'}{e.reason ? ` — ${e.reason}` : ''}</span>
+                        <span className="text-slate-500">{POLICY_STATUS_LABELS[e.status] || 'Chưa xác định'}{e.reason ? `: ${e.reason}` : ''}</span>
                       </div>
                       {e.evidence?.as_of_date && (
                         <p className="text-[11px] text-slate-400 mt-0.5">Tính đến: {e.evidence.as_of_date}</p>
@@ -2877,64 +2715,11 @@ function NoConclusionView({ formValues, onRetrySearch, onEditInfo }) {
         </div>
       </div>
 
-      {/* 2x2 Action Guidance Grid */}
-      <div className="bg-white rounded-md border border-slate-200 p-5 shadow-sm">
-        <h4 className="text-[15px] font-bold text-slate-900 mb-3.5">Phương án tra cứu bổ sung</h4>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-          <div
-            onClick={onRetrySearch}
-            className="p-3.5 rounded-md border border-slate-200 hover:border-red-400 hover:bg-red-50/40 cursor-pointer transition-all flex items-start gap-3 group"
-          >
-            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-colors">
-              1
-            </span>
-            <div>
-              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-red-600">Kiểm tra lại họ tên</h5>
-              <p className="text-[12px] text-slate-500 mt-0.5">Thử tên viết tắt, bỏ dấu hoặc tên đầy đủ theo CCCD.</p>
-            </div>
-          </div>
-
-          <div
-            onClick={onRetrySearch}
-            className="p-3.5 rounded-md border border-slate-200 hover:border-red-400 hover:bg-red-50/40 cursor-pointer transition-all flex items-start gap-3 group"
-          >
-            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-colors">
-              2
-            </span>
-            <div>
-              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-red-600">Tra theo số hiệu</h5>
-              <p className="text-[12px] text-slate-500 mt-0.5">Nếu có mã định danh khác, hãy thử tra cứu trực tiếp số hiệu.</p>
-            </div>
-          </div>
-
-          <div
-            onClick={onRetrySearch}
-            className="p-3.5 rounded-md border border-slate-200 hover:border-red-400 hover:bg-red-50/40 cursor-pointer transition-all flex items-start gap-3 group"
-          >
-            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-colors">
-              3
-            </span>
-            <div>
-              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-red-600">Tra theo đơn vị</h5>
-              <p className="text-[12px] text-slate-500 mt-0.5">Thử tra cứu theo đơn vị trực thuộc hoặc cấp cơ quan cao hơn.</p>
-            </div>
-          </div>
-
-          <div
-            onClick={onRetrySearch}
-            className="p-3.5 rounded-md border border-slate-200 hover:border-red-400 hover:bg-red-50/40 cursor-pointer transition-all flex items-start gap-3 group"
-          >
-            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-colors">
-              4
-            </span>
-            <div>
-              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-red-600">Tải tài liệu</h5>
-              <p className="text-[12px] text-slate-500 mt-0.5">Dùng tệp PDF, Word, Excel hoặc ảnh để hệ thống tự động đọc thông tin.</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3">
+      <div className="bg-white rounded-md border border-slate-200 p-4 shadow-sm">
+        <p className="text-[13px] text-slate-600">
+          Có thể tra cứu lại với họ tên đầy đủ, mã số cán bộ hoặc tên đơn vị cấp trên, hoặc tải tài liệu gốc để hệ thống đọc thông tin.
+        </p>
+        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3">
           <button
             type="button"
             onClick={onRetrySearch}

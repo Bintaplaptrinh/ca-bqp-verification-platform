@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
-import { Loader2, RefreshCw } from '../../icons/index.jsx';
+import { Loader2, RefreshCw, FileText } from '../../icons/index.jsx';
+import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
 
 export function AuditPage({ apiBaseUrl }) {
   const [items, setItems] = useState([]);
@@ -25,30 +26,32 @@ export function AuditPage({ apiBaseUrl }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 py-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-xl font-extrabold text-slate-900">Nhật ký kiểm toán</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Nhật ký nghiệp vụ append-only — chỉ ghi, không sửa/xoá.</p>
-          </div>
-          <button onClick={load} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">
-            <RefreshCw className="w-4 h-4" /> Tải lại
-          </button>
-        </div>
+      <PageContainer className="py-3 sm:py-4">
+        <PageHeader
+          trail={[{ label: 'Trang chủ' }, { label: 'Quản trị' }]}
+          title="Nhật ký kiểm toán"
+          description="Nhật ký nghiệp vụ chỉ được ghi thêm, không sửa hoặc xóa."
+          icon={FileText}
+          actions={
+            <button onClick={load} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50">
+              <RefreshCw className="w-4 h-4" /> Tải lại
+            </button>
+          }
+        />
 
         {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{String(error)}</div>}
 
         {loading ? (
-          <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>
+          <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>
         ) : (
           <div className="bg-white border border-slate-200 rounded-md overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+              <thead className="bg-slate-50 text-slate-700 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200">
                 <tr>
                   <th className="text-left px-4 py-2.5">Thời gian</th>
-                  <th className="text-left px-4 py-2.5">Actor</th>
+                  <th className="text-left px-4 py-2.5">Người thực hiện</th>
                   <th className="text-left px-4 py-2.5">Hành động</th>
-                  <th className="text-left px-4 py-2.5">Entity</th>
+                  <th className="text-left px-4 py-2.5">Đối tượng</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -70,13 +73,13 @@ export function AuditPage({ apiBaseUrl }) {
                   </React.Fragment>
                 ))}
                 {items.length === 0 && (
-                  <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">Chưa có bản ghi audit nào.</td></tr>
+                  <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">Chưa có bản ghi nào.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </PageContainer>
     </div>
   );
 }

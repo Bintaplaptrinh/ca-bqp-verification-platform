@@ -11,8 +11,10 @@ import {
   ShieldCheck,
   Trash2,
   Unlock,
+  UserCheck,
   UserPlus,
 } from '../../icons/index.jsx';
+import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
 
 /**
  * Account administration.
@@ -352,21 +354,18 @@ export function UsersAdminPage({ apiBaseUrl }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-6xl mx-auto px-6 py-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-xl font-extrabold text-slate-900">Quản trị tài khoản</h1>
-            <p className="text-sm text-slate-500 mt-0.5">
-              Cấp tài khoản theo thông tin hành chính và phân quyền theo từng chức năng.
-            </p>
-          </div>
-          <button
-            onClick={load}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 hover:bg-slate-50"
-          >
-            <RefreshCw className="w-4 h-4" /> Tải lại
-          </button>
-        </div>
+      <PageContainer className="py-3 sm:py-4">
+        <PageHeader
+          trail={[{ label: 'Trang chủ' }, { label: 'Quản trị' }]}
+          title="Quản trị tài khoản"
+          description="Cấp tài khoản theo thông tin hành chính và phân quyền theo từng chức năng."
+          icon={UserCheck}
+          actions={
+            <button onClick={load} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50">
+              <RefreshCw className="w-4 h-4" /> Tải lại
+            </button>
+          }
+        />
 
         <CredentialNotice credential={credential} onDismiss={() => setCredential(null)} />
 
@@ -429,7 +428,7 @@ export function UsersAdminPage({ apiBaseUrl }) {
         <div className="flex items-center gap-3 mb-3">
           <input
             className="h-10 px-3 rounded-md border border-slate-200 text-sm w-72"
-            placeholder="Tìm theo tên, mã số, phòng ban…"
+            placeholder="Tìm theo tên, mã số, phòng ban"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -438,7 +437,7 @@ export function UsersAdminPage({ apiBaseUrl }) {
 
         {loading ? (
           <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center">
-            <Loader2 className="w-4 h-4 animate-spin" /> Đang tải...
+            <Loader2 className="w-4 h-4 animate-spin" /> Đang tải
           </div>
         ) : (
           <div className="bg-white border border-slate-200 rounded-md overflow-hidden">
@@ -463,8 +462,8 @@ export function UsersAdminPage({ apiBaseUrl }) {
                         {u.email && <div className="text-xs text-slate-400">{u.email}</div>}
                       </td>
                       <td className="px-4 py-3 text-slate-600 text-xs">
-                        <div>{[u.rank, u.position].filter(Boolean).join(' · ') || '—'}</div>
-                        <div className="text-slate-400">{[u.department, u.unit_name].filter(Boolean).join(' · ')}</div>
+                        <div>{[u.rank, u.position].filter(Boolean).join(', ') || 'Chưa có'}</div>
+                        <div className="text-slate-400">{[u.department, u.unit_name].filter(Boolean).join(', ')}</div>
                       </td>
                       <td className="px-4 py-3">
                         {u.is_admin ? (
@@ -477,7 +476,7 @@ export function UsersAdminPage({ apiBaseUrl }) {
                             className="text-xs text-red-600 hover:underline"
                             onClick={() => setExpanded(expanded === u.username ? null : u.username)}
                           >
-                            {u.permissions.length} quyền — {expanded === u.username ? 'thu gọn' : 'chỉnh sửa'}
+                            {u.permissions.length} quyền ({expanded === u.username ? 'thu gọn' : 'chỉnh sửa'})
                           </button>
                         )}
                       </td>
@@ -576,7 +575,7 @@ export function UsersAdminPage({ apiBaseUrl }) {
             </table>
           </div>
         )}
-      </div>
+      </PageContainer>
     </div>
   );
 }

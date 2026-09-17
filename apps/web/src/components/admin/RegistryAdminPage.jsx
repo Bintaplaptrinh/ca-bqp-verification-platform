@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
-import { RefreshCw, Loader2, CheckCircle2, XCircle, Plus } from '../../icons/index.jsx';
+import { RefreshCw, Loader2, CheckCircle2, XCircle, Plus, Building2 } from '../../icons/index.jsx';
+import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
 
 const TABS = [
   { value: 'units', label: 'Đơn vị' },
@@ -75,7 +76,7 @@ function UnitsTab({ apiBaseUrl }) {
         <input
           value={newUnit.canonical_name}
           onChange={(e) => setNewUnit((x) => ({ ...x, canonical_name: e.target.value }))}
-          placeholder="Tên đơn vị mới..."
+          placeholder="Tên đơn vị mới"
           className="text-sm border border-slate-200 rounded-md px-2.5 py-1.5 outline-none focus:border-red-400 flex-1 min-w-[220px]"
         />
         <select
@@ -105,7 +106,7 @@ function UnitsTab({ apiBaseUrl }) {
       {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{String(error)}</div>}
 
       {loading ? (
-        <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>
+        <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>
       ) : (
         <div className="bg-white border border-slate-200 rounded-md overflow-hidden">
           <table className="w-full text-sm">
@@ -175,7 +176,7 @@ function CandidatesTab({ apiBaseUrl }) {
     }
   };
 
-  if (loading) return <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>;
+  if (loading) return <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>;
 
   return (
     <div>
@@ -185,7 +186,7 @@ function CandidatesTab({ apiBaseUrl }) {
           <div key={c.id} className="bg-white border border-slate-200 rounded-md p-4 flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-bold text-slate-900">{c.proposed_name}</p>
-              <p className="text-xs text-slate-500 mt-0.5">Tên ban đầu: {c.raw_name} • {ORG_LABELS[c.organization_type] || c.organization_type}</p>
+              <p className="text-xs text-slate-500 mt-0.5">Tên ban đầu: {c.raw_name} ({ORG_LABELS[c.organization_type] || c.organization_type})</p>
             </div>
             <div className="inline-flex gap-1.5 flex-shrink-0">
               <button onClick={() => decide(c.id, 'APPROVE')} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-200">
@@ -232,7 +233,7 @@ function VersionsTab({ apiBaseUrl }) {
     }
   };
 
-  if (loading) return <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>;
+  if (loading) return <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>;
 
   return (
     <div>
@@ -252,7 +253,7 @@ function VersionsTab({ apiBaseUrl }) {
               <tr key={v.id}>
                 <td className="px-4 py-2.5 font-medium text-slate-900">{v.version}</td>
                 <td className="px-4 py-2.5"><QaBadge status={v.status} /></td>
-                <td className="px-4 py-2.5 text-slate-600">{v.counts?.units ?? '—'}</td>
+                <td className="px-4 py-2.5 text-slate-600">{v.counts?.units ?? 'Chưa có'}</td>
                 <td className="px-4 py-2.5 text-right">
                   <div className="inline-flex gap-1.5">
                     {v.status === 'DRAFT' && (
@@ -278,16 +279,20 @@ export function RegistryAdminPage({ apiBaseUrl }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 py-6">
-        <h1 className="text-xl font-extrabold text-slate-900 mb-0.5">Danh mục đơn vị</h1>
-        <p className="text-sm text-slate-500 mb-4">Quản lý đơn vị, các đề xuất chờ duyệt và phiên bản danh mục đơn vị.</p>
-        <div className="flex gap-1.5 mb-4">
+      <PageContainer className="py-3 sm:py-4">
+        <PageHeader
+          trail={[{ label: 'Trang chủ' }, { label: 'Quản trị' }]}
+          title="Danh mục đơn vị"
+          description="Quản lý đơn vị, các đề xuất chờ duyệt và phiên bản danh mục đơn vị."
+          icon={Building2}
+        />
+        <div className="flex border-b border-slate-200 mb-3">
           {TABS.map((t) => (
             <button
               key={t.value}
               onClick={() => setTab(t.value)}
-              className={`px-3.5 py-1.5 rounded-md text-sm font-semibold transition-colors ${
-                tab === t.value ? 'bg-red-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'
+              className={`px-3.5 pt-1.5 pb-2 mr-1 text-[13px] font-semibold border-b-2 transition-colors ${
+                tab === t.value ? 'text-red-600 border-red-600 bg-red-50/70' : 'text-slate-600 border-transparent hover:text-slate-900'
               }`}
             >
               {t.label}
@@ -297,7 +302,7 @@ export function RegistryAdminPage({ apiBaseUrl }) {
         {tab === 'units' && <UnitsTab apiBaseUrl={apiBaseUrl} />}
         {tab === 'candidates' && <CandidatesTab apiBaseUrl={apiBaseUrl} />}
         {tab === 'versions' && <VersionsTab apiBaseUrl={apiBaseUrl} />}
-      </div>
+      </PageContainer>
     </div>
   );
 }

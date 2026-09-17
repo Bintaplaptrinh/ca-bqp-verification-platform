@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { CheckCircle2, HelpCircle, RefreshCw, Loader2, UserCheck, UserMinus, Users, ChevronDown, ChevronUp } from '../../icons/index.jsx';
+import { CheckCircle2, HelpCircle, RefreshCw, Loader2, UserCheck, UserMinus, Users, ChevronDown, ChevronUp, ListChecks } from '../../icons/index.jsx';
+import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
 
 const STATUS_TABS = [
   { value: 'OPEN', label: 'Đang mở' },
@@ -208,7 +209,7 @@ function UnitPicker({ apiBaseUrl, value, onChange }) {
       <input
         value={value ? `${value}` : query}
         onChange={(e) => { onChange(''); setQuery(e.target.value); }}
-        placeholder="Nhập tên đơn vị để tìm kiếm..."
+        placeholder="Nhập tên đơn vị để tìm kiếm"
         className="w-full text-xs border border-slate-200 rounded-md px-2.5 py-1.5 outline-none focus:border-red-400"
       />
       {searching && <Loader2 className="w-3.5 h-3.5 animate-spin absolute right-2 top-1.5 text-slate-400" />}
@@ -292,7 +293,7 @@ function DecisionForm({ item, apiBaseUrl, onDone, onConflict }) {
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="Ghi chú thẩm định..."
+        placeholder="Ghi chú thẩm định"
         rows={2}
         className="w-full text-xs border border-slate-200 rounded-md px-2.5 py-1.5 outline-none focus:border-red-400 resize-none"
       />
@@ -652,7 +653,7 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
       {error && <div className="text-red-600 bg-red-50 border border-red-200 rounded-md px-2.5 py-1">{String(error)}</div>}
       {full && (
         <div className="border border-red-200 bg-red-50/40 rounded-md p-2.5 space-y-1.5">
-          <p className="font-semibold text-red-800">Thông tin mới nhất — có thể khác dữ liệu ban đầu nếu hồ sơ đã được xử lý lại</p>
+          <p className="font-semibold text-red-800">Thông tin mới nhất, có thể khác dữ liệu ban đầu nếu hồ sơ đã được xử lý lại</p>
           <div className="grid grid-cols-2 gap-2 text-slate-700">
             <Field label="Kết quả" value={RESULT_STATUS_LABELS[full.resolution_status] || full.resolution_status} />
             <Field label="Tổ chức" value={full.organization_type} />
@@ -710,20 +711,22 @@ export function ReviewsPage({ apiBaseUrl, user }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 py-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-xl font-extrabold text-slate-900">Hàng đợi thẩm định</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Các hồ sơ cần cán bộ kiểm tra vì hệ thống chưa đủ căn cứ tự động kết luận.</p>
-          </div>
-          <button onClick={load} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">
-            <RefreshCw className="w-4 h-4" /> Tải lại
-          </button>
-        </div>
+      <PageContainer className="py-3 sm:py-4">
+        <PageHeader
+          trail={[{ label: 'Trang chủ' }, { label: 'Quản trị' }]}
+          title="Hàng đợi thẩm định"
+          description="Các hồ sơ cần cán bộ kiểm tra vì hệ thống chưa đủ căn cứ để tự kết luận."
+          icon={ListChecks}
+          actions={
+            <button onClick={load} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50">
+              <RefreshCw className="w-4 h-4" /> Tải lại
+            </button>
+          }
+        />
 
         {conflictBanner && (
           <div className="flex items-center justify-between text-sm text-amber-800 bg-[#FDF0BE] border border-amber-200 rounded-md px-4 py-3 mb-4">
-            <span>Hồ sơ đã được người khác cập nhật — đã tải lại dữ liệu mới nhất. Vui lòng kiểm tra lại trước khi thao tác tiếp.</span>
+            <span>Hồ sơ đã được người khác cập nhật. Dữ liệu mới nhất đã được tải lại. Vui lòng kiểm tra lại trước khi thao tác tiếp.</span>
             <button onClick={() => setConflictBanner(false)} className="text-amber-600 hover:text-amber-800 font-semibold ml-3 flex-shrink-0">Đóng</button>
           </div>
         )}
@@ -746,7 +749,7 @@ export function ReviewsPage({ apiBaseUrl, user }) {
 
         {loading ? (
           <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center">
-            <Loader2 className="w-4 h-4 animate-spin" /> Đang tải...
+            <Loader2 className="w-4 h-4 animate-spin" /> Đang tải
           </div>
         ) : items.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-slate-400">
@@ -824,7 +827,7 @@ export function ReviewsPage({ apiBaseUrl, user }) {
         {!loading && total > PAGE_SIZE && (
           <div className="flex items-center justify-between mt-4 text-sm text-slate-600">
             <span>
-              Trang {page}/{totalPages} — {total} hồ sơ (cũ nhất trước)
+              Trang {page}/{totalPages}, {total} hồ sơ (cũ nhất trước)
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -844,7 +847,7 @@ export function ReviewsPage({ apiBaseUrl, user }) {
             </div>
           </div>
         )}
-      </div>
+      </PageContainer>
     </div>
   );
 }
