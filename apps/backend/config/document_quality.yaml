@@ -1,0 +1,20 @@
+version: threshold-calibrated-2026.09-v2
+ocr:
+  conf_p10_min: 0.70
+  conf_min: 0.30
+  low_conf_line: 0.70
+  low_conf_ratio_max: 0.20
+text:
+  charset_violation_max: 0.02
+  min_alpha_chars: 200
+  min_tokens: 30
+  min_alpha_token_ratio: 0.60
+  diacritic_ratio_min: 0.08
+  ioc_min_chars: 100
+  ioc_min: 1.10
+  entropy_min: 3.50
+image:
+  blur_variance_min: 50.0
+  contrast_std_min: 12.0
+batch:
+  auto_map_threshold: 0.90

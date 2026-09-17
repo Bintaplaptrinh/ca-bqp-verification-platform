@@ -1,0 +1,76 @@
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
+    HF_HOME=/models \
+    HOME=/models \
+    PADDLE_PDX_CACHE_HOME=/models/paddlex \
+    EASYOCR_MODEL_DIR=/models/easyocr \
+    USE_TF=0 \
+    USE_TORCH=1 \
+    RESOLVER_CALIBRATION_PATH=/app/artifacts/resolver_calibration.json
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libmagic1 libgl1 libglib2.0-0 tesseract-ocr tesseract-ocr-vie fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system cabqp \
+    && useradd --system --gid cabqp --home-dir /app --shell /usr/sbin/nologin cabqp
+
+# Dependency install and the model bake only need the dependency list and bake_models.py,
+# not the application source (`pip install .` needs `src/` present because packages are
+# discovered there, so the *package itself* is installed in the second RUN below, after
+# COPY src). Copying just these first means an edit anywhere else (src/, other scripts,
+# migrations, config) reuses this layer's cache instead of re-running pip install and
+# re-downloading every OCR/embedding model.
+COPY pyproject.toml ./
+COPY scripts/bake_models.py ./scripts/bake_models.py
+
+# Build is the only networked model-fetch phase. A failed model bake fails the image build.
+# torch arrives only via sentence-transformers and this service runs inference on CPU
+# (see ocr/engines.py and bake_models.py). Installing it from the CPU index first keeps
+# pip from pulling ~3.5GB of unused CUDA wheels into the image.
+ENV PIP_DEFAULT_TIMEOUT=180 \
+    PIP_RETRIES=10
+# The pip cache is mounted from the BuildKit cache store, not baked into a layer, so it
+# survives across builds without adding bytes to the final image. That matters here
+# because the dependency set (torch, paddlepaddle, paddleocr, ...) runs several GB and a
+# `docker builder prune` or a fresh Docker Desktop install otherwise means re-downloading
+# all of it from scratch every time.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cpu torch \
+    && python -c "import tomllib,subprocess,sys; deps=tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; subprocess.check_call([sys.executable,'-m','pip','install',*deps])" \
+    && mkdir -p /models \
+    && python scripts/bake_models.py
+
+# Everything below changes far more often than dependencies do; putting it in its own
+# layer keeps a source-only edit from invalidating the (slow) install above. All
+# dependencies are already installed, so this is a metadata-only install (no wheels
+# downloaded, no version resolution).
+COPY src ./src
+COPY config ./config
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY scripts ./scripts
+COPY artifacts ./artifacts
+COPY bootstrap ./bootstrap
+RUN pip install --no-cache-dir --no-deps . \
+    && chown -R cabqp:cabqp /app /models
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+    EASYOCR_DOWNLOAD_ENABLED=false \
+    EMBEDDING_LOCAL_FILES_ONLY=true \
+    EMBEDDING_MODEL_NAME=/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
+    VIETOCR_WEIGHTS=/models/vietocr/vgg_transformer.pth
+# VIETOCR_WEIGHTS is only populated when the optional vietocr extra is installed;
+# the default paddle/paddle OCR path never reads it.
+
+USER cabqp
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).read()" || exit 1
+CMD ["uvicorn","cabqp.main:app","--host","0.0.0.0","--port","8000"]

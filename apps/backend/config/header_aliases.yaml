@@ -1,0 +1,10 @@
+version: header-map-2026.09-v1
+fields:
+  subject_name: ["họ và tên", "họ tên", "ho ten", "tên cán bộ", "full name", "full_name", "name"]
+  subject_code: ["cccd", "cmnd", "số cccd", "so cccd", "mã cá nhân", "personal code", "personal_code", "số hiệu", "ma ca nhan"]
+  position: ["chức vụ", "chuc vu", "position", "cấp bậc", "cap bac"]
+  unit_name: ["đơn vị công tác", "don vi cong tac", "đơn vị", "don vi", "canonical_unit_name", "unit_name", "cơ quan"]
+  subject_group: ["nhóm đối tượng", "nhom doi tuong", "subject_group"]
+  employment_status: ["trạng thái công tác", "employment_status"]
+  birth_year: ["năm sinh", "nam sinh", "birth_year"]
+  as_of_date: ["ngày đánh giá", "assessment_date", "as_of_date"]
