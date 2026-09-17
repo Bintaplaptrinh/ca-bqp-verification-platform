@@ -1,22 +1,43 @@
 import React, { useState } from 'react';
-import {
-  Clock,
-  Search,
-  Filter,
-  Eye,
-  Layers,
-  FileText,
-  Trash2,
-  CheckCircle2,
-  AlertTriangle,
-  HelpCircle,
-  Download,
-  RotateCcw,
-  ArrowRight,
-  ShieldCheck,
-  Building2,
-  User,
-} from 'lucide-react';
+import { Clock, Search, RotateCcw } from '../icons/index.jsx';
+
+const RESULT_STATUS_STYLES = {
+  VERIFIED: { bar: 'bg-emerald-600', text: 'text-emerald-800' },
+  NEED_REVIEW: { bar: 'bg-amber-600', text: 'text-amber-800' },
+  NO_CONCLUSION: { bar: 'bg-slate-400', text: 'text-slate-600' },
+};
+
+function ResultStatus({ item }) {
+  const key = RESULT_STATUS_STYLES[item.statusCategory] ? item.statusCategory : 'NO_CONCLUSION';
+  const style = RESULT_STATUS_STYLES[key];
+  const label =
+    key === 'VERIFIED'
+      ? `${item.orgType === 'BQP' ? 'BQP' : 'BCA'} - Đã xác định`
+      : key === 'NEED_REVIEW'
+      ? 'Cần xác minh thêm'
+      : 'Chưa có kết luận';
+  return (
+    <span className={`inline-flex items-center gap-2 text-[12.5px] font-semibold ${style.text}`}>
+      <span className={`w-[3px] h-3.5 flex-shrink-0 ${style.bar}`} />
+      {label}
+    </span>
+  );
+}
+
+function SubjectFacts({ item }) {
+  const facts = [
+    item.birthYear ? `Năm sinh: ${item.birthYear}` : null,
+    item.position ? `Chức vụ: ${item.position}` : null,
+  ].filter(Boolean);
+  if (facts.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-x-4 text-[12px] text-slate-500 mt-0.5">
+      {facts.map((fact) => (
+        <span key={fact}>{fact}</span>
+      ))}
+    </div>
+  );
+}
 
 export default function HistoryView({
   historyList,
@@ -24,16 +45,29 @@ export default function HistoryView({
   onViewOriginalDossier,
   onViewDetailedCompare,
   onClearHistory,
+  onDeleteItem,
+  onRefresh,
   onBackToSearch,
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (!onRefresh) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const filteredHistory = historyList.filter((item) => {
     const matchesSearch =
-      item.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.caseCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (item.department && item.department.toLowerCase().includes(searchTerm.toLowerCase()));
+      String(item.fullName ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      String(item.caseCode ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      String(item.department ?? '').toLowerCase().includes(searchTerm.toLowerCase());
 
     if (statusFilter === 'ALL') return matchesSearch;
     return matchesSearch && item.statusCategory === statusFilter;
@@ -49,23 +83,30 @@ export default function HistoryView({
       {/* Top Banner & Action */}
       <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-600 text-[10.5px] font-bold tracking-wider uppercase mb-1">
-            <Clock className="w-3 h-3" />
-            NHẬT KÝ TRA CỨU &amp; KIỂM TOÁN LƯU VẾT
-          </div>
           <h1 className="text-[19px] sm:text-[22px] md:text-[24px] font-bold text-slate-900 leading-tight">
             Lịch sử tra cứu hồ sơ CA/BQP
           </h1>
           <p className="text-[12px] sm:text-[12.5px] text-slate-500 mt-0.5">
-            Theo dõi, tái hiện và kiểm tra các phiên đối soát đã được lưu trữ trong hệ thống theo tiêu chuẩn Quality-first 2026.
+            Theo dõi và kiểm tra lại các lượt tra cứu đã được lưu trong hệ thống.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-600 font-semibold text-[13px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              <span>Tải lại</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onBackToSearch}
-            className="w-full sm:w-auto px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[13px] flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+            className="w-full sm:w-auto px-3.5 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold text-[13px] flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <Search className="w-3.5 h-3.5" />
             <span>Tra cứu hồ sơ mới</span>
@@ -73,35 +114,23 @@ export default function HistoryView({
         </div>
       </div>
 
-      {/* Summary KPI Cards */}
-      <div className="flex-shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-2.5 my-2">
-        <div className="bg-white rounded-xl border border-slate-200 p-2.5 sm:p-3 shadow-xs">
-          <span className="text-slate-500 text-[11.5px] block">Tổng lượt tra cứu</span>
-          <div className="text-[20px] sm:text-[22px] font-bold text-slate-900 mt-0.5">{totalCount}</div>
-          <span className="text-[10.5px] text-slate-400">Phiên làm việc nội bộ</span>
-        </div>
-
-        <div className="bg-white rounded-xl border border-slate-200 p-2.5 sm:p-3 shadow-xs">
-          <span className="text-emerald-700 font-medium text-[11.5px] block">Đã xác định (BCA/BQP)</span>
-          <div className="text-[20px] sm:text-[22px] font-bold text-emerald-600 mt-0.5">{verifiedCount}</div>
-          <span className="text-[10.5px] text-emerald-600/80">Khớp 100% Master Registry</span>
-        </div>
-
-        <div className="bg-white rounded-xl border border-slate-200 p-2.5 sm:p-3 shadow-xs">
-          <span className="text-amber-700 font-medium text-[11.5px] block">Cần xác minh thêm</span>
-          <div className="text-[20px] sm:text-[22px] font-bold text-amber-600 mt-0.5">{reviewCount}</div>
-          <span className="text-[10.5px] text-amber-600/80">Chuyển luồng thẩm định</span>
-        </div>
-
-        <div className="bg-white rounded-xl border border-slate-200 p-2.5 sm:p-3 shadow-xs">
-          <span className="text-slate-600 font-medium text-[11.5px] block">Chưa có kết luận</span>
-          <div className="text-[20px] sm:text-[22px] font-bold text-slate-700 mt-0.5">{noConclusionCount}</div>
-          <span className="text-[10.5px] text-slate-500">Giữ nguyên NOT_FOUND</span>
-        </div>
+      {/* Summary counts */}
+      <div className="flex-shrink-0 grid grid-cols-2 lg:grid-cols-4 bg-white border border-slate-200 rounded-md divide-x divide-slate-200 my-2">
+        {[
+          { label: 'Tổng lượt tra cứu', value: totalCount },
+          { label: 'Đã xác định (BCA/BQP)', value: verifiedCount },
+          { label: 'Cần xác minh thêm', value: reviewCount },
+          { label: 'Chưa có kết luận', value: noConclusionCount },
+        ].map((stat) => (
+          <div key={stat.label} className="px-3.5 py-2.5">
+            <div className="text-[11.5px] text-slate-500">{stat.label}</div>
+            <div className="text-[19px] font-bold text-slate-900 mt-0.5 tabular-nums">{stat.value}</div>
+          </div>
+        ))}
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="flex-shrink-0 bg-white rounded-xl border border-slate-200 p-2.5 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-2.5 mb-2">
+      <div className="flex-shrink-0 bg-white rounded-md border border-slate-200 p-2.5 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-2.5 mb-2">
         <div className="relative w-full sm:w-80">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
             <Search className="w-3.5 h-3.5" />
@@ -111,7 +140,7 @@ export default function HistoryView({
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Tìm theo họ tên, mã hồ sơ hoặc đơn vị..."
-            className="w-full h-8.5 pl-9 pr-3 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-100 text-[13px] bg-slate-50/50 outline-none transition-all"
+            className="w-full h-8.5 pl-9 pr-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-1 focus:ring-red-100 text-[13px] bg-slate-50/50 outline-none transition-all"
           />
         </div>
 
@@ -128,9 +157,9 @@ export default function HistoryView({
             <button
               key={tab.id}
               onClick={() => setStatusFilter(tab.id)}
-              className={`px-2.5 py-1 rounded-lg text-[12px] font-semibold transition-all cursor-pointer ${
+              className={`px-2.5 py-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
                 statusFilter === tab.id
-                  ? 'bg-blue-600 text-white shadow-xs'
+                  ? 'bg-red-600 text-white shadow-xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
@@ -141,73 +170,56 @@ export default function HistoryView({
       </div>
 
       {/* History Records Container */}
-      <div className="flex-1 min-h-0 bg-white rounded-xl border border-slate-200 shadow-xs flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 bg-white rounded-md border border-slate-200 shadow-xs flex flex-col overflow-hidden">
         {/* Mobile View: Cards (< sm) */}
         <div className="block sm:hidden flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100">
-          {filteredHistory.length === 0 ? (
+          {historyList.length === 0 ? (
             <div className="py-12 text-center text-slate-500 px-4">
               <Clock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="font-semibold text-slate-700">Chưa tìm thấy bản ghi tra cứu</p>
+              <p className="font-semibold text-slate-700">Chưa có hồ sơ tra cứu nào</p>
+              <p className="text-[12.5px] text-slate-400 mt-1 mb-3">
+                Thực hiện tra cứu đối tượng hoặc tải tệp tài liệu để hệ thống tự động ghi nhật ký nghiệp vụ.
+              </p>
+              <button
+                type="button"
+                onClick={onBackToSearch}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold text-[12px] shadow-xs cursor-pointer"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Bắt đầu tra cứu</span>
+              </button>
+            </div>
+          ) : filteredHistory.length === 0 ? (
+            <div className="py-12 text-center text-slate-500 px-4">
+              <Clock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <p className="font-semibold text-slate-700">Không tìm thấy bản ghi phù hợp bộ lọc</p>
               <p className="text-[12.5px] text-slate-400 mt-0.5">Thử điều chỉnh từ khóa tìm kiếm</p>
             </div>
           ) : (
             filteredHistory.map((item) => (
               <div key={item.id} className="p-4 space-y-3 hover:bg-slate-50/70 transition-colors">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono font-bold text-blue-600 text-[13px]">{item.caseCode}</span>
+                  <span className="font-mono font-bold text-red-600 text-[13px]">{item.caseCode}</span>
                   <span className="text-[11.5px] text-slate-400 font-mono">{item.timestamp}</span>
                 </div>
                 <div>
                   <div className="font-bold text-slate-900 text-[15px]">{item.fullName}</div>
-                  <div className="text-[12.5px] text-slate-600 mt-0.5">
-                    Năm sinh: {item.birthYear || '—'} {item.position ? `• ${item.position}` : ''}
-                  </div>
+                  <SubjectFacts item={item} />
                   {item.department && (
                     <div className="text-[12px] text-slate-500 mt-0.5">Đơn vị: {item.department}</div>
                   )}
                 </div>
                 <div className="flex items-center justify-between pt-1">
-                  <div>
-                    {item.statusCategory === 'VERIFIED' ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                        <span>{item.orgType === 'BQP' ? 'BQP - Đã xác định' : 'BCA - Đã xác định'}</span>
-                      </span>
-                    ) : item.statusCategory === 'NEED_REVIEW' ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                        <AlertTriangle className="w-3 h-3 text-amber-600" />
-                        <span>Cần xác minh</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                        <HelpCircle className="w-3 h-3 text-slate-400" />
-                        <span>Chưa có kết luận</span>
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[11.5px] text-slate-500">Cán bộ {item.officer || '#9928'}</span>
+                  <ResultStatus item={item} />
+                  <span className="text-[11.5px] text-slate-500">Cán bộ {item.officer}</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100">
+                <div className="flex justify-end pt-2 border-t border-slate-100">
                   <button
                     type="button"
                     onClick={() => onSelectCase(item)}
-                    className="py-1.5 px-2 rounded-lg bg-blue-50 text-blue-700 text-[12px] font-semibold flex items-center justify-center"
+                    className="py-1.5 px-2 rounded-md bg-red-50 text-red-700 text-[12px] font-semibold flex items-center justify-center"
                   >
                     <span>Xem lại</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onViewOriginalDossier(item)}
-                    className="py-1.5 px-2 rounded-lg border border-slate-200 text-slate-700 text-[12px] font-semibold flex items-center justify-center"
-                  >
-                    <span>Hồ sơ</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onViewDetailedCompare(item)}
-                    className="py-1.5 px-2 rounded-lg border border-slate-200 text-slate-700 text-[12px] font-semibold flex items-center justify-center"
-                  >
-                    <span>Đối chiếu</span>
                   </button>
                 </div>
               </div>
@@ -230,11 +242,29 @@ export default function HistoryView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredHistory.length === 0 ? (
+              {historyList.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-14 text-center text-slate-500">
+                    <Clock className="w-9 h-9 text-slate-300 mx-auto mb-2" />
+                    <p className="font-semibold text-[14px] text-slate-700">Chưa có hồ sơ tra cứu nào trong phiên làm việc</p>
+                    <p className="text-[12.5px] text-slate-400 mt-1 mb-4">
+                      Hãy thực hiện tra cứu đối tượng hoặc tải tệp hồ sơ để hệ thống tự động lưu vết và đồng bộ.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={onBackToSearch}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold text-[13px] shadow-xs cursor-pointer"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      <span>Bắt đầu tra cứu ngay</span>
+                    </button>
+                  </td>
+                </tr>
+              ) : filteredHistory.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-slate-500">
                     <Clock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                    <p className="font-semibold text-slate-700">Chưa tìm thấy bản ghi tra cứu phù hợp</p>
+                    <p className="font-semibold text-slate-700">Không tìm thấy bản ghi phù hợp bộ lọc</p>
                     <p className="text-[12.5px] text-slate-400 mt-0.5">
                       Thử điều chỉnh từ khóa tìm kiếm hoặc lọc theo trạng thái khác.
                     </p>
@@ -243,38 +273,21 @@ export default function HistoryView({
               ) : (
                 filteredHistory.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 px-4 font-mono font-bold text-blue-600">
+                    <td className="py-3.5 px-4 font-mono font-bold text-red-600">
                       {item.caseCode}
                     </td>
 
                     <td className="py-3.5 px-4">
                       <div className="font-bold text-slate-900">{item.fullName}</div>
-                      <div className="text-[12px] text-slate-500">
-                        Năm sinh: {item.birthYear || '—'} {item.position ? `• ${item.position}` : ''}
-                      </div>
+                      <SubjectFacts item={item} />
                     </td>
 
                     <td className="py-3.5 px-4 text-slate-700 font-medium">
-                      {item.department || '—'}
+                      {item.department || 'Chưa xác định'}
                     </td>
 
                     <td className="py-3.5 px-4">
-                      {item.statusCategory === 'VERIFIED' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>{item.orgType === 'BQP' ? 'BQP - Đã xác định' : 'BCA - Đã xác định'}</span>
-                        </span>
-                      ) : item.statusCategory === 'NEED_REVIEW' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Cần xác minh thêm</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                          <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Chưa có kết luận</span>
-                        </span>
-                      )}
+                      <ResultStatus item={item} />
                     </td>
 
                     <td className="py-3.5 px-4 text-[12.5px] text-slate-500 font-mono">
@@ -282,7 +295,7 @@ export default function HistoryView({
                     </td>
 
                     <td className="py-3.5 px-4 text-[12.5px] text-slate-700 font-medium">
-                      {item.officer || '#9928'}
+                      {item.officer || 'Không rõ'}
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
@@ -290,29 +303,12 @@ export default function HistoryView({
                         <button
                           type="button"
                           onClick={() => onSelectCase(item)}
-                          className="px-2.5 py-1.5 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 text-[12px] font-semibold transition-colors"
+                          className="px-2.5 py-1.5 rounded-md bg-red-50 text-red-700 hover:bg-red-100 text-[12px] font-semibold transition-colors"
                           title="Xem lại kết quả tra cứu này"
                         >
                           <span>Xem lại</span>
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => onViewOriginalDossier(item)}
-                          className="px-2.5 py-1.5 rounded-md border border-slate-200 hover:bg-slate-100 text-slate-700 text-[12px] font-semibold transition-colors"
-                          title="Xem hồ sơ gốc trích lục"
-                        >
-                          <span>Hồ sơ gốc</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => onViewDetailedCompare(item)}
-                          className="px-2.5 py-1.5 rounded-md border border-slate-200 hover:bg-slate-100 text-slate-700 text-[12px] font-semibold transition-colors"
-                          title="Đối chiếu chi tiết thực thể"
-                        >
-                          <span>Đối chiếu</span>
-                        </button>
                       </div>
                     </td>
                   </tr>
@@ -329,16 +325,6 @@ export default function HistoryView({
               Hiển thị <strong>{filteredHistory.length}</strong> trên tổng số <strong>{historyList.length}</strong> hồ sơ đã tra cứu.
             </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={onClearHistory}
-                className="text-red-600 hover:text-red-700 font-semibold flex items-center gap-1 transition-colors text-[12.5px]"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Xóa toàn bộ lịch sử</span>
-              </button>
-            </div>
           </div>
         )}
       </div>

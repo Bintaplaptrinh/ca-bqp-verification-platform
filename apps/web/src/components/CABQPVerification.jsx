@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import {
   Shield,
@@ -21,7 +21,6 @@ import {
   Cpu,
   Lock,
   Edit3,
-  Filter,
   ArrowLeft,
   MoreVertical,
   Download,
@@ -44,83 +43,243 @@ import {
   LogOut,
   ExternalLink,
   Layers,
-  Sparkles,
   Image as ImageIcon,
   FileImage,
-} from 'lucide-react';
+} from '../icons/index.jsx';
 
 import OriginalDossierModal from './OriginalDossierModal.jsx';
 import DetailedComparisonModal from './DetailedComparisonModal.jsx';
 import HistoryView from './HistoryView.jsx';
 import OcrResultModal from './OcrResultModal.jsx';
+import { ReviewsPage } from './admin/ReviewsPage.jsx';
+import { RegistryAdminPage } from './admin/RegistryAdminPage.jsx';
+import { PersonRegistryAdminPage } from './admin/PersonRegistryAdminPage.jsx';
+import { AuditPage } from './admin/AuditPage.jsx';
+import { UsersAdminPage } from './admin/UsersAdminPage.jsx';
+import { can, getAccessToken } from '../auth.ts';
+import { P } from '../permissions.ts';
 
 // Default FastAPI backend URL
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-// Default initial history cases representing real operational audits
-const DEFAULT_HISTORY = [
-  {
-    id: 'hs-1',
-    caseCode: '#HS-2026-8492',
-    fullName: 'Nguyễn Văn A',
-    birthYear: '1985',
-    department: 'Đơn vị X - Cục CSDT',
-    position: 'Cán bộ điều tra / Thiếu tá CAND',
-    identifier: 'CA-8492',
-    orgType: 'BCA',
-    statusCategory: 'VERIFIED',
-    appState: 'verified',
-    timestamp: '09/09/2026 14:32',
-    officer: '#9928',
-  },
-  {
-    id: 'hs-2',
-    caseCode: '#HS-2026-7712',
-    fullName: 'Phạm Quốc Dũng',
-    birthYear: '1980',
-    department: 'Cục Tác chiến - BQP',
-    position: 'Sĩ quan tham mưu / Trung tá QĐND',
-    identifier: 'BQP-7712',
-    orgType: 'BQP',
-    statusCategory: 'VERIFIED',
-    appState: 'verified',
-    timestamp: '08/09/2026 10:15',
-    officer: '#9928',
-  },
-  {
-    id: 'hs-3',
-    caseCode: '#HS-2026-3104',
-    fullName: 'Trần Văn Bình',
-    birthYear: '1985',
-    department: 'Công an quận Hoàng Mai',
-    position: 'Cán bộ quản lý',
-    identifier: 'CA-8492',
-    orgType: 'UNKNOWN',
-    statusCategory: 'NEED_REVIEW',
-    appState: 'needs-verification',
-    timestamp: '07/09/2026 16:45',
-    officer: '#9928',
-  },
-  {
-    id: 'hs-4',
-    caseCode: '#HS-2026-1190',
-    fullName: 'Lê Hoàng D',
-    birthYear: '1994',
-    department: 'Công ty CP Giải pháp X',
-    position: 'Kỹ sư hệ thống (Dân sự)',
-    identifier: 'DS-9901',
-    orgType: 'OTHER',
-    statusCategory: 'NO_CONCLUSION',
-    appState: 'no-conclusion',
-    timestamp: '06/09/2026 09:20',
-    officer: '#9928',
-  },
-];
+// Builds the same currentCaseData shape from a real GET /cases/{id} response,
+// shared by the live-search success path and the History "Xem lại" reopen
+// path so there is exactly one place that maps backend fields to UI state.
+function buildCaseResultFromDetail(caseId, caseDetail) {
+  const res = caseDetail?.result;
+  const extracted = caseDetail?.extracted || {};
+  return {
+    case_code: `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}`,
+    case_id: caseId,
+    organization_type: caseDetail?.organization_type || res?.organization_type || 'OTHER',
+    resolution_status: caseDetail?.resolution_status || res?.resolution_status || 'MATCHED',
+    workflow_status: caseDetail?.case?.workflow_status || caseDetail?.workflow_status || 'PROCESSED',
+    unit_id: res?.unit_id,
+    current_unit: caseDetail?.current_unit || res?.evidence?.canonical_name || '',
+    fullName: caseDetail?.subject?.name || extracted.subject_name || '',
+    subject_group: caseDetail?.subject_group || null,
+    subject_group_method: res?.evidence?.subject_group_method || null,
+    subject_group_confidence: res?.evidence?.subject_group_confidence ?? null,
+    taxonomy_version: res?.taxonomy_version || null,
+    salary_status: caseDetail?.salary_status || 'Không đủ dữ liệu',
+    score: res?.score ? `${Math.round(res.score * 100)}%` : '—',
+    evidence: res?.evidence || [],
+    topCandidates: Array.isArray(res?.top_candidates) ? res.top_candidates : [],
+    eligibility: Array.isArray(caseDetail?.eligibility) ? caseDetail.eligibility : [],
+  };
+}
 
-export default function CABQPVerification() {
+// Why subject_group came out null/positive — surfaced in the UI instead of a
+// blank "Chưa xác định", per the classifier's own abstain reasons
+// (subject_group/service.py). UI-transparency only: this never changes what
+// the classifier decides, only how its decision is explained.
+const SUBJECT_GROUP_METHOD_LABELS = {
+  INSUFFICIENT_EVIDENCE: 'Không đủ căn cứ văn bản để phân loại nhóm đối tượng',
+  INVALID_EXPLICIT_GROUP: 'Giá trị nhóm đối tượng khai báo không hợp lệ',
+  RULE_TEXT: 'Suy luận từ từ khóa trong văn bản',
+  EXPLICIT_FIELD: 'Khai báo trực tiếp trong hồ sơ',
+};
+
+const ROLE_LABELS = {
+  USER: 'Cán bộ tra cứu',
+  REVIEWER: 'Cán bộ thẩm định',
+  ADMIN: 'Quản trị viên',
+};
+
+const SOURCE_KIND_LABELS = {
+  MASTER_REGISTRY: 'Danh mục đơn vị nghiệp vụ',
+  PERSON_REGISTRY: 'Danh mục đối tượng nghiệp vụ',
+  PROVIDED: 'Nguồn được cung cấp',
+  IMPORTED: 'Dữ liệu nhập vào',
+};
+
+const POLICY_STATUS_LABELS = {
+  ELIGIBLE: 'Đủ điều kiện',
+  NOT_ELIGIBLE: 'Không đủ điều kiện',
+  INSUFFICIENT_DATA: 'Chưa đủ dữ liệu',
+  UNKNOWN: 'Chưa xác định',
+};
+
+function resolvedStateFromDetail(caseDetail) {
+  const res = caseDetail?.result;
+  const org = caseDetail?.organization_type || res?.organization_type || 'OTHER';
+  if (caseDetail?.resolution_status === 'MATCHED' && (org === 'BCA' || org === 'BQP')) return 'verified';
+  if (caseDetail?.resolution_status === 'AMBIGUOUS' || caseDetail?.case?.workflow_status === 'NEED_REVIEW') return 'needs-verification';
+  return 'no-conclusion';
+}
+
+// Attach the session token to every request. The token is an opaque session
+// id: it says who is calling, never what they may do. The server reads the
+// account's permissions on each request and answers 403 on its own.
+axios.interceptors.request.use((cfg) => {
+  const token = getAccessToken();
+  if (token) cfg.headers = { ...cfg.headers, Authorization: `Bearer ${token}` };
+  return cfg;
+});
+
+// A session the server has ended (logout elsewhere, deactivated account,
+// expiry) must not leave the UI pretending to be signed in.
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) window.location.reload();
+    return Promise.reject(error);
+  }
+);
+
+// Initial history starts completely clean and dynamically records user operations or backend cases
+const DEFAULT_HISTORY = [];
+
+function UploadStatusBadge({ data, compact = false }) {
+  const confidence = data?.confidence && data.confidence !== '—' ? data.confidence : null;
+  const confidenceNumber = confidence ? Number.parseFloat(String(confidence).replace('%', '')) : null;
+  const qualityLabel = Number.isFinite(confidenceNumber)
+    ? confidenceNumber >= 90
+      ? 'Chất lượng trích xuất tốt'
+      : confidenceNumber >= 70
+      ? 'Chất lượng trích xuất khá'
+      : 'Nên kiểm tra lại dữ liệu'
+    : 'Đã trích xuất';
+  const sizeClass = compact ? 'text-[10.5px] px-1.5' : 'text-[11px] px-2';
+
+  if (!data) {
+    return (
+      <span className={`inline-flex items-center gap-1 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600 font-bold ${sizeClass}`}>
+        <Clock className="w-3 h-3" />
+        <span>Chờ kết quả phân tích</span>
+      </span>
+    );
+  }
+
+  if (data.isBulk) {
+    return (
+      <span className={`inline-flex items-center gap-1 py-0.5 rounded border border-red-200 bg-red-50 text-red-700 font-bold ${sizeClass}`}>
+        <Layers className="w-3 h-3" />
+        <span>Danh sách nhiều dòng</span>
+      </span>
+    );
+  }
+
+  if (data.qualityGate === 'FAIL') {
+    return (
+      <span className={`inline-flex items-center gap-1 py-0.5 rounded border border-amber-200 bg-[#FDF0BE] text-amber-700 font-bold ${sizeClass}`}>
+        <AlertTriangle className="w-3 h-3" />
+        <span>Cần kiểm tra{confidence ? ` · ${confidence}` : ''}</span>
+      </span>
+    );
+  }
+
+  if (confidence) {
+    return (
+      <span className={`inline-flex items-center gap-1 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 font-bold ${sizeClass}`}>
+        <CheckCircle2 className="w-3 h-3" />
+        <span>{qualityLabel}</span>
+      </span>
+    );
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600 font-bold ${sizeClass}`}>
+      <Info className="w-3 h-3" />
+      <span>Đã trích xuất</span>
+    </span>
+  );
+}
+
+/**
+ * Map the entry form onto the API's structured fields.
+ *
+ * `text` is still sent and still stored as the Case's raw text: it is the
+ * narrative the extractor falls back on. The structured fields outrank it —
+ * `extract()` ranks a `structured` value above anything it reads out of prose —
+ * which is what makes an operator's correction actually take effect.
+ */
+const CORRECTED_FIELD_LABELS = {
+  subject_name: 'Họ và tên',
+  subject_code: 'Mã số cán bộ',
+  position: 'Chức vụ',
+  unit_name: 'Đơn vị công tác',
+};
+
+/**
+ * States that this result rests on operator-corrected input.
+ *
+ * `fields` comes from the server's own diff against the original Case's stored
+ * extraction, so it reports what the pipeline actually read before the edit —
+ * not what the browser happened to be displaying.
+ */
+function CorrectionNotice({ fields }) {
+  if (!fields || fields.length === 0) return null;
+  const labels = fields.map((f) => CORRECTED_FIELD_LABELS[f] || f).join(', ');
+  return (
+    <div className="rounded-md border border-amber-300 bg-[#FDF0BE] px-4 py-3 text-sm text-amber-900">
+      <strong className="font-semibold">Kết quả dựa trên thông tin đã hiệu đính.</strong>{' '}
+      Cán bộ đã sửa: {labels}. Hồ sơ gốc do hệ thống đọc được vẫn lưu riêng để đối chiếu.
+    </div>
+  );
+}
+
+function structuredPayload(values) {
+  const lines = [
+    values.fullName && `Họ và tên: ${values.fullName.trim()}`,
+    values.birthYear && `Năm sinh: ${values.birthYear.trim()}`,
+    values.identifier && `Mã số cán bộ: ${values.identifier.trim()}`,
+    values.position && `Chức vụ: ${values.position.trim()}`,
+    values.department && `Đơn vị công tác: ${values.department.trim()}`,
+    values.extraInfo && values.extraInfo.trim(),
+  ].filter(Boolean);
+
+  const payload = {
+    text: lines.join('\n') || values.queryText.trim(),
+    input_mode: 'FORM',
+    subject_name: values.fullName.trim() || null,
+    subject_code: values.identifier.trim() || null,
+    unit_name: values.department.trim() || null,
+    position: values.position.trim() || null,
+  };
+  if (values.birthYear && values.birthYear.trim()) {
+    payload.business_fields = { birth_year: Number(values.birthYear.trim()) };
+  }
+  return payload;
+}
+
+export default function CABQPVerification({ user, onLogout }) {
+  const roles = user?.roles instanceof Set ? user.roles : new Set();
+  // What the navigation offers. The server decides what actually happens: each
+  // of these screens calls endpoints that re-check the same permission, so a
+  // caller who reaches one another way gets 403 rather than data.
+  const canReview = can(user, P.REVIEW_QUEUE, P.REVIEW_DECIDE);
+  const canAdminUnits = can(user, P.REGISTRY_ADMIN);
+  const canAdminPersons = can(user, P.PERSON_REGISTRY_ADMIN);
+  const canViewAudit = can(user, P.AUDIT_VIEW);
+  const canAdminUsers = can(user, P.USER_ADMIN);
+  const hasAdminMenu = canReview || canAdminUnits || canAdminPersons || canViewAudit || canAdminUsers;
+
   // App view states: 'initial' | 'loading' | 'verified' | 'needs-verification' | 'no-conclusion'
   const [appState, setAppState] = useState('initial');
-  const [currentNav, setCurrentNav] = useState('search'); // 'search' | 'history'
+  // 'search' | 'history' | 'reviews' | 'admin-units' | 'admin-persons' | 'admin-audit'
+  const [currentNav, setCurrentNav] = useState('search');
+  const [isAdminMenuOpen, setIsAdminMenuOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [activeTab, setActiveTab] = useState('manual');
@@ -130,6 +289,11 @@ export default function CABQPVerification() {
   const [filePreviewUrl, setFilePreviewUrl] = useState(null);
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractedData, setExtractedData] = useState(null);
+  const [pendingCaseId, setPendingCaseId] = useState(null);
+  // 'form' = structured entry with required fields; 'text' = free-text lookup.
+  const [entryMode, setEntryMode] = useState('form');
+  // Fields the server reported as operator-corrected on the current result.
+  const [correctedFields, setCorrectedFields] = useState([]);
   const [isOcrModalOpen, setIsOcrModalOpen] = useState(false);
   const [uploadMessage, setUploadMessage] = useState(null);
   const mainFileInputRef = useRef(null);
@@ -137,21 +301,86 @@ export default function CABQPVerification() {
 
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
-  // Modals state for "Xem hồ sơ gốc" & "Đối chiếu chi tiết"
+  // Modals state for "Xem hồ sơ gốc" & "Đối chiếu chi tiết" — both render the
+  // real GET /cases/{id} response (modalCaseDetail), never a synthetic object.
   const [isOriginalDossierOpen, setIsOriginalDossierOpen] = useState(false);
   const [isDetailedCompareOpen, setIsDetailedCompareOpen] = useState(false);
+  const [modalCaseDetail, setModalCaseDetail] = useState(null);
+  const [modalLoadError, setModalLoadError] = useState(null);
   const [modalCaseData, setModalCaseData] = useState(null);
 
-  // Persistent Search & Verification History
+  // Persistent Search & Verification History: automatically purges legacy mock records
   const [historyList, setHistoryList] = useState(() => {
     try {
       const saved = localStorage.getItem('cabqp_verification_history');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // Purge legacy mock cases (hs-1, hs-2, hs-3, hs-4) and mock names
+          const realCases = parsed.filter(
+            (item) =>
+              !['hs-1', 'hs-2', 'hs-3', 'hs-4'].includes(item.id) &&
+              item.fullName !== 'Nguyễn Văn A' &&
+              item.fullName !== 'Phạm Quốc Dũng' &&
+              item.fullName !== 'Trần Văn Bình' &&
+              item.fullName !== 'Lê Hoàng D'
+          );
+          return realCases;
+        }
+      }
     } catch (e) {
       console.warn('Cannot read history from localStorage:', e);
     }
     return DEFAULT_HISTORY;
   });
+
+  // Sync real cases from the backend database — on mount and every time the
+  // Lịch sử tab is opened, so newly created/updated cases show up without a
+  // full page reload (this view is not a static snapshot).
+  const syncHistoryFromBackend = useCallback(() => {
+    return axios
+      .get(`${API_BASE_URL}/api/v1/cases`, { params: { page_size: 200 }, timeout: 5000 })
+      .then((res) => {
+        if (res.data && Array.isArray(res.data.items)) {
+          const backendMapped = res.data.items.map((c) => ({
+            id: c.id,
+            caseCode: `#HS-2026-${c.id.replace(/^case_/i, '').slice(0, 8).toUpperCase()}`,
+            fullName: c.subject_name || 'Chưa nhận dạng được đối tượng',
+            birthYear: c.birth_year || '',
+            department: c.current_unit || 'Chưa xác định đơn vị',
+            position: c.position || '',
+            identifier: c.subject_code || '',
+            orgType: c.organization_type || 'UNKNOWN',
+            statusCategory:
+              c.resolution_status === 'MATCHED' && ['BCA', 'BQP'].includes(c.organization_type)
+                ? 'VERIFIED'
+                : ['AMBIGUOUS', 'CONFLICT'].includes(c.resolution_status)
+                ? 'NEED_REVIEW'
+                : 'NO_CONCLUSION',
+            appState:
+              c.resolution_status === 'MATCHED' && ['BCA', 'BQP'].includes(c.organization_type)
+                ? 'verified'
+                : ['AMBIGUOUS', 'CONFLICT'].includes(c.resolution_status)
+                ? 'needs-verification'
+                : 'no-conclusion',
+            timestamp: new Date(c.created_at).toLocaleString('vi-VN'),
+            officer: c.created_by || '',
+          }));
+          setHistoryList(backendMapped);
+        }
+      })
+      .catch(() => {
+        // Standalone or backend offline mode
+      });
+  }, []);
+
+  useEffect(() => {
+    syncHistoryFromBackend();
+  }, [syncHistoryFromBackend]);
+
+  useEffect(() => {
+    if (currentNav === 'history') syncHistoryFromBackend();
+  }, [currentNav, syncHistoryFromBackend]);
 
   // Save history updates
   useEffect(() => {
@@ -162,13 +391,14 @@ export default function CABQPVerification() {
     }
   }, [historyList]);
 
-  // Form input state
+  // Form input state: starts completely dynamic and empty
   const [formValues, setFormValues] = useState({
-    fullName: 'Nguyễn Văn A',
-    birthYear: '1985',
-    position: 'Cán bộ điều tra',
-    department: 'Đơn vị X - Cục CSDT',
-    identifier: 'CA-8492',
+    queryText: '',
+    fullName: '',
+    birthYear: '',
+    position: '',
+    department: '',
+    identifier: '',
     extraInfo: '',
   });
 
@@ -248,105 +478,55 @@ export default function CABQPVerification() {
   };
 
   // Helper to record new case in history
-  const addCaseToHistory = (resolvedState, orgType = 'BCA', caseCode = null) => {
-    const code = caseCode || `#HS-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-    const now = new Date();
-    const formattedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-    let statusCat = 'VERIFIED';
-    if (resolvedState === 'needs-verification') statusCat = 'NEED_REVIEW';
-    if (resolvedState === 'no-conclusion') statusCat = 'NO_CONCLUSION';
-
-    const newEntry = {
-      id: `hs-${Date.now()}`,
-      caseCode: code,
-      fullName: formValues.fullName || 'Hồ sơ đối chiếu',
-      birthYear: formValues.birthYear || 'Chưa cung cấp',
-      department: formValues.department || (orgType === 'BCA' ? 'Bộ Công an' : orgType === 'BQP' ? 'Bộ Quốc phòng' : 'Chưa phân loại'),
-      position: formValues.position || (resolvedState === 'no-conclusion' ? 'Chưa rõ' : 'Cán bộ nghiệp vụ'),
-      identifier: formValues.identifier || (resolvedState === 'no-conclusion' ? 'Chưa cấp' : `${orgType}-${Math.floor(1000 + Math.random() * 9000)}`),
-      orgType: orgType,
-      statusCategory: statusCat,
-      appState: resolvedState,
-      timestamp: formattedDate,
-      officer: '#9928',
-    };
-
-    setHistoryList((prev) => [newEntry, ...prev.filter((i) => i.caseCode !== code)]);
+  // Open "Xem hồ sơ gốc" / "Đối chiếu chi tiết" — both fetch the real case
+  // detail by id rather than accepting a synthetic object, so the modals
+  // never show fabricated fields.
+  const openCaseModal = async (caseId, which) => {
+    if (!caseId) return;
+    setModalLoadError(null);
+    try {
+      const detailRes = await axios.get(`/api/v1/cases/${caseId}`, { timeout: 5000 });
+      setModalCaseDetail(detailRes.data);
+      if (which === 'dossier') setIsOriginalDossierOpen(true);
+      else setIsDetailedCompareOpen(true);
+    } catch (err) {
+      setModalLoadError(
+        err?.response?.data?.detail?.message || err?.response?.data?.detail || 'Không tải được hồ sơ.'
+      );
+    }
   };
 
-  // Open "Xem hồ sơ gốc" modal
-  const handleOpenOriginalDossier = (overrideData = null) => {
-    const data = overrideData || {
-      fullName: formValues.fullName || 'Nguyễn Văn A',
-      birthYear: formValues.birthYear || '1985',
-      department: formValues.department || 'Đơn vị X - Cục CSDT',
-      position: formValues.position || 'Cán bộ điều tra',
-      identifier: formValues.identifier || 'CA-8492',
-      caseCode: currentCaseData?.case_code || '#HS-2026-8492',
-      orgType: (formValues.department && formValues.department.includes('BQP')) ? 'BQP' : 'BCA',
-    };
-    setModalCaseData(data);
-    setIsOriginalDossierOpen(true);
-  };
+  const handleOpenOriginalDossier = (caseId = currentCaseData?.case_id) => openCaseModal(caseId, 'dossier');
+  const handleOpenDetailedCompare = (caseId = currentCaseData?.case_id) => openCaseModal(caseId, 'compare');
 
-  // Open "Đối chiếu chi tiết" modal
-  const handleOpenDetailedCompare = (overrideData = null) => {
-    const data = overrideData || {
-      fullName: formValues.fullName || 'Nguyễn Văn A',
-      birthYear: formValues.birthYear || '1985',
-      department: formValues.department || 'Đơn vị X - Cục CSDT',
-      position: formValues.position || 'Cán bộ điều tra',
-      identifier: formValues.identifier || 'CA-8492',
-      caseCode: currentCaseData?.case_code || '#HS-2026-8492',
-      orgType: (formValues.department && formValues.department.includes('BQP')) ? 'BQP' : 'BCA',
-      status: appState === 'verified' ? 'MATCHED' : appState === 'needs-verification' ? 'AMBIGUOUS' : 'NOT_FOUND',
-    };
-    setModalCaseData(data);
-    setIsDetailedCompareOpen(true);
-  };
-
-  // Handle selecting a past search from History
-  const handleSelectHistoryCase = (item) => {
-    setFormValues({
-      fullName: item.fullName || '',
-      birthYear: item.birthYear || '',
-      position: item.position || '',
-      department: item.department || '',
-      identifier: item.identifier || '',
-      extraInfo: '',
-    });
-    setCurrentCaseData({
-      case_code: item.caseCode,
-      organization_type: item.orgType,
-    });
-    setAppState(item.appState || 'verified');
+  // Handle selecting a past search from History — re-fetches the real case
+  // detail instead of replaying the thin locally-cached row, so subject_group/
+  // eligibility/salary_status reflect what the backend actually holds today.
+  const handleSelectHistoryCase = async (item) => {
+    if (!item?.id) return;
+    setApiError(null);
     setCurrentNav('search');
-  };
-
-  const handleViewHistoryOriginalDossier = (caseItem) => {
-    handleOpenOriginalDossier({
-      fullName: caseItem.fullName,
-      birthYear: caseItem.birthYear,
-      department: caseItem.department,
-      position: caseItem.position,
-      identifier: caseItem.identifier,
-      caseCode: caseItem.caseCode,
-      orgType: caseItem.orgType,
-    });
-  };
-
-  const handleViewHistoryDetailedCompare = (caseItem) => {
-    handleOpenDetailedCompare({
-      fullName: caseItem.fullName,
-      birthYear: caseItem.birthYear,
-      department: caseItem.department,
-      position: caseItem.position,
-      identifier: caseItem.identifier,
-      caseCode: caseItem.caseCode,
-      orgType: caseItem.orgType,
-      status: caseItem.statusCategory === 'VERIFIED' ? 'MATCHED' : caseItem.statusCategory === 'NEED_REVIEW' ? 'AMBIGUOUS' : 'NOT_FOUND',
-    });
+    setAppState('loading');
+    try {
+      const detailRes = await axios.get(`/api/v1/cases/${item.id}`, { timeout: 5000 });
+      const caseDetail = detailRes.data;
+      const extracted = caseDetail.extracted || {};
+      setFormValues((prev) => ({
+        ...prev,
+        queryText: caseDetail.subject?.name || prev.queryText,
+        fullName: caseDetail.subject?.name || extracted.subject_name || '',
+        position: extracted.position || '',
+        department: extracted.current_unit_raw || '',
+        identifier: extracted.subject_code || '',
+      }));
+      setCurrentCaseData(buildCaseResultFromDetail(item.id, caseDetail));
+      setAppState(resolvedStateFromDetail(caseDetail));
+    } catch (err) {
+      setApiError(
+        err?.response?.data?.detail?.message || err?.response?.data?.detail || 'Không tải được hồ sơ đã lưu.'
+      );
+      setAppState('initial');
+    }
   };
 
   const handleClearHistory = () => {
@@ -356,8 +536,20 @@ export default function CABQPVerification() {
     }
   };
 
-  // Intelligent OCR & document extraction processor
-  const handleProcessFile = (file) => {
+  const handleDeleteHistoryItem = (id) => {
+    setHistoryList((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleExportPdf = () => {
+    window.print();
+  };
+
+  // OCR & document extraction processor: uploads the file to the real backend
+  // (PaddleOCR for images/scans, PDF/DOCX parsers otherwise) and shows what the
+  // pipeline actually extracted. There is no client-side guessing from the file
+  // name or a regex over raw bytes — those produced fabricated names (e.g. a
+  // PDF named "05_pdf_hybrid.pdf" showed up as person name "05 Hybrid").
+  const handleProcessFile = async (file) => {
     if (!file) return;
 
     if (file.size > 25 * 1024 * 1024) {
@@ -366,91 +558,163 @@ export default function CABQPVerification() {
     }
 
     setUploadedFile(file);
+    // A newly selected file must never inherit confidence or fields from the
+    // previously processed file while its own backend result is pending.
+    setExtractedData(null);
     setIsExtracting(true);
     setUploadMessage('Đang phân tích hình ảnh/tài liệu và trích xuất thực thể...');
+    setPendingCaseId(null);
 
-    if (file.type && file.type.startsWith('image/')) {
+    if (filePreviewUrl) {
+      URL.revokeObjectURL(filePreviewUrl);
+    }
+    const canPreviewInBrowser =
+      file.type?.startsWith('image/') ||
+      file.type === 'application/pdf' ||
+      file.name?.toLowerCase().endsWith('.pdf');
+    if (canPreviewInBrowser) {
       const url = URL.createObjectURL(file);
       setFilePreviewUrl(url);
     } else {
       setFilePreviewUrl(null);
     }
 
-    const nameLower = (file.name || '').toLowerCase();
-    let extracted;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      let uploadRes;
+      try {
+        uploadRes = await axios.post(`/api/v1/cases/file`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'Idempotency-Key': `web-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+          },
+          timeout: 120000,
+        });
+      } catch (uploadError) {
+        const detail = uploadError?.response?.data?.detail || '';
+        const detailText =
+          typeof detail === 'string' ? detail : JSON.stringify(detail);
+        const isTabularList =
+          uploadError?.response?.status === 422 &&
+          (
+            detail?.code === 'TABULAR_LIST' ||
+            /TABULAR_LIST|multi-row tabular list|\/api\/v1\/bulk/i.test(detailText)
+          );
+        if (!isTabularList) {
+          throw uploadError;
+        }
 
-    if (nameLower.includes('binh') || nameLower.includes('hoang mai')) {
-      extracted = {
-        fullName: 'Trần Văn Bình',
-        birthYear: '1985',
-        department: 'Công an quận Hoàng Mai',
-        position: 'Cán bộ quản lý',
-        identifier: 'CA-8492',
-        extraInfo: `Trích xuất tự động từ tệp: ${file.name}`,
-        confidence: '98.5%',
-        docType: 'Hồ sơ đề nghị xác minh đối tượng',
-      };
-    } else if (
-      nameLower.includes('dung') ||
-      nameLower.includes('bqp') ||
-      nameLower.includes('quan') ||
-      nameLower.includes('tac chien')
-    ) {
-      extracted = {
-        fullName: 'Phạm Quốc Dũng',
-        birthYear: '1980',
-        department: 'Cục Tác chiến - BQP',
-        position: 'Sĩ quan tham mưu',
-        identifier: 'BQP-7712',
-        extraInfo: `Trích xuất tự động từ tệp: ${file.name}`,
-        confidence: '99.4%',
-        docType: 'Quyết định điều động cán bộ BQP',
-      };
-    } else if (
-      nameLower.includes('dan su') ||
-      nameLower.includes('ngoai nganh') ||
-      nameLower.includes('le hoang') ||
-      nameLower.includes('cong ty')
-    ) {
-      extracted = {
-        fullName: 'Lê Hoàng D',
-        birthYear: '1994',
-        department: 'Đơn vị dân sự ngoài ngành',
-        position: 'Kỹ sư hệ thống',
-        identifier: 'DS-9901',
-        extraInfo: `Trích xuất tự động từ tệp: ${file.name}`,
-        confidence: '97.2%',
-        docType: 'Hợp đồng lao động dân sự',
-      };
-    } else {
-      extracted = {
-        fullName: formValues.fullName && formValues.fullName !== 'Nguyễn Văn A' ? formValues.fullName : 'Nguyễn Văn A',
-        birthYear: '1985',
-        department: 'Đơn vị X - Cục CSDT',
-        position: 'Cán bộ điều tra',
-        identifier: 'CA-8492',
-        extraInfo: `Trích xuất tự động từ tệp: ${file.name}`,
-        confidence: '99.1%',
+        const bulkForm = new FormData();
+        bulkForm.append('file', file);
+        const bulkRes = await axios.post('/api/v1/bulk', bulkForm, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 120000,
+        });
+        const bulkDetail = bulkRes.data?.duplicate_file
+          ? (await axios.get(`/api/v1/bulk/${bulkRes.data.job_id}`)).data
+          : null;
+        const bulkData = {
+          isBulk: true,
+          jobId: bulkRes.data.job_id,
+          status: bulkDetail?.job?.status || bulkRes.data.status,
+          profile: bulkRes.data.profile || null,
+          validation: bulkRes.data.validation || bulkDetail?.job?.validation || {},
+          mapping: bulkRes.data.mapping || bulkDetail?.job?.mapping || {},
+          job: bulkDetail?.job || null,
+          rows: bulkDetail?.rows || bulkRes.data.rows || [],
+          errors: bulkDetail?.errors || [],
+          duplicateFile: Boolean(bulkRes.data.duplicate_file),
+        };
+        setIsExtracting(false);
+        setExtractedData(bulkData);
+        setUploadMessage(`Đã nhận diện bảng danh sách: ${file.name}`);
+        setIsOcrModalOpen(true);
+        return;
+      }
+      const caseId = uploadRes?.data?.case_id;
+      if (!caseId) throw new Error('Hệ thống không tạo được mã hồ sơ. Vui lòng thử lại.');
+
+      // Document processing runs async on the worker; poll the case until the
+      // extraction result lands instead of guessing a fixed delay.
+      let caseDetail = null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const detailRes = await axios.get(`/api/v1/cases/${caseId}`, { timeout: 5000 });
+        caseDetail = detailRes.data;
+        if (caseDetail?.extracted || caseDetail?.case?.workflow_status === 'FAILED') break;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+
+      const ex = caseDetail?.extracted;
+      const evidence = caseDetail?.result?.evidence;
+      const failed = caseDetail?.case?.workflow_status === 'FAILED';
+      const splitSource = evidence?.split_source;
+      const blockCount = splitSource?.block_count || 1;
+      const isMultiSubject = blockCount > 1;
+
+      const extracted = {
+        fullName: ex?.subject_name || '',
+        birthYear: '',
+        department: ex?.current_unit_raw || '',
+        position: ex?.position || '',
+        identifier: ex?.subject_code || '',
+        extraInfo: failed
+          ? `Xử lý tài liệu thất bại: ${file.name}`
+          : isMultiSubject
+            ? `Tài liệu có ${blockCount} người — đây là hồ sơ số ${splitSource.block_index + 1}/${blockCount}. Hệ thống đã tự động đọc tệp: ${file.name}`
+            : ex
+              ? `Hệ thống đã tự động đọc tệp: ${file.name}`
+              : `Chưa trích xuất được thực thể từ: ${file.name} (vui lòng nhập tay hoặc thử lại)`,
+        confidence:
+          evidence?.parse_confidence != null
+            ? `${Math.round(evidence.parse_confidence * 100)}%`
+            : '—',
+        extractionCompleteness:
+          ex?.extraction_confidence != null
+            ? `${Math.round(ex.extraction_confidence * 100)}%`
+            : '—',
+        parseMethod: evidence?.parse_method || 'PARSER',
+        qualityGate: evidence?.parse_quality?.gate_result || null,
         docType: file.type?.startsWith('image/')
-          ? 'Ảnh thẻ Cán bộ CAND số hóa'
-          : 'Văn bản quyết định chuẩn hóa 2026',
+          ? 'Ảnh thẻ / Bản chụp tài liệu số hóa'
+          : 'Tài liệu nghiệp vụ định dạng số',
+        isMultiSubject,
+        blockIndex: splitSource?.block_index,
+        blockCount,
+        sourcePreviewRows: evidence?.parse_evidence?.source_preview_rows || [],
+        sourcePreviewText: evidence?.parse_evidence?.source_preview_text || '',
       };
-    }
 
-    setTimeout(() => {
       setIsExtracting(false);
       setExtractedData(extracted);
+      setPendingCaseId(caseId);
       setFormValues((prev) => ({
         ...prev,
-        fullName: extracted.fullName,
-        birthYear: extracted.birthYear,
-        department: extracted.department,
-        position: extracted.position,
-        identifier: extracted.identifier,
-        extraInfo: extracted.extraInfo,
+        fullName: extracted.fullName || prev.fullName,
+        department: extracted.department || prev.department,
+        position: extracted.position || prev.position,
+        identifier: extracted.identifier || prev.identifier,
+        extraInfo: extracted.extraInfo || prev.extraInfo,
       }));
-      setUploadMessage(`Đã nhận diện thành công: ${extracted.fullName} (${extracted.department})`);
-    }, 600);
+      setUploadMessage(
+        failed
+          ? `Xử lý tài liệu thất bại: ${file.name}`
+          : isMultiSubject
+            ? `Tài liệu "${file.name}" có ${blockCount} người — hệ thống đã tách thành ${blockCount} hồ sơ riêng biệt. Xem tại mục Lịch sử.`
+            : `Đã xử lý tài liệu: ${file.name}`
+      );
+      setIsOcrModalOpen(true);
+      if (isMultiSubject) {
+        // Sibling cases already exist in the backend by the time this one's polling
+        // finished; pull them into history now so "Lịch sử" doesn't require a manual
+        // refresh to reveal the other people found in this document.
+        syncHistoryFromBackend();
+      }
+    } catch (err) {
+      setIsExtracting(false);
+      setUploadMessage('Không thể đọc tài liệu. Vui lòng kiểm tra tệp và thử lại.');
+      setExtractedData(null);
+    }
   };
 
   const handleClearUploadedFile = () => {
@@ -461,50 +725,69 @@ export default function CABQPVerification() {
     }
     setExtractedData(null);
     setUploadMessage(null);
+    setPendingCaseId(null);
     if (mainFileInputRef.current) mainFileInputRef.current.value = '';
     if (sidebarFileInputRef.current) sidebarFileInputRef.current.value = '';
   };
 
-  const handleLoadSample = (sampleType) => {
-    let mockFile;
-    if (sampleType === 'bca') {
-      mockFile = new File(['mock content'], 'the_can_bo_CAND_nguyen_van_a.png', { type: 'image/png' });
-    } else if (sampleType === 'bqp') {
-      mockFile = new File(['mock content'], 'quyet_dinh_dieu_dong_BQP_pham_quoc_dung.pdf', {
-        type: 'application/pdf',
-      });
-    } else {
-      mockFile = new File(['mock content'], 'bien_ban_xac_minh_tran_van_binh.jpg', {
-        type: 'image/jpeg',
-      });
-    }
-    handleProcessFile(mockFile);
+  // Browsers do not emit `change` when the user chooses the same path twice.
+  // Clear the native input before opening it so closing the result modal and
+  // selecting the same document always runs the upload flow again.
+  const openFilePicker = (inputRef) => {
+    if (!inputRef.current) return;
+    inputRef.current.value = '';
+    inputRef.current.click();
   };
 
   // Perform search / verification with API and offline fallback
-  const handleSearch = async (e) => {
+  // `options.values` lets a caller (the OCR review modal) hand corrected fields
+  // straight in. Reading them from state instead would race setFormValues, which
+  // is why an earlier version needed a setTimeout and still dropped edits.
+  const handleSearch = async (e, options = {}) => {
     if (e) e.preventDefault();
 
-    const isCurrentUpload = (appState === 'initial' ? activeTab : sidebarTab) === 'upload';
+    const values = { ...formValues, ...(options.values || {}) };
+    const correctedFrom = options.correctedFrom || null;
+    const isCurrentUpload =
+      !correctedFrom && (appState === 'initial' ? activeTab : sidebarTab) === 'upload';
+    const usingForm = entryMode === 'form' || Boolean(correctedFrom);
 
     // If on upload tab but no file selected, open picker or use filled form
-    if (isCurrentUpload && !uploadedFile && !formValues.fullName.trim()) {
+    if (isCurrentUpload && !uploadedFile && !values.fullName.trim()) {
       if (appState === 'initial' && mainFileInputRef.current) {
-        mainFileInputRef.current.click();
+        openFilePicker(mainFileInputRef);
       } else if (sidebarFileInputRef.current) {
-        sidebarFileInputRef.current.click();
+        openFilePicker(sidebarFileInputRef);
       }
       return;
     }
 
-    if (!isCurrentUpload && !formValues.fullName.trim()) {
-      setErrors((prev) => ({ ...prev, fullName: 'Vui lòng nhập họ và tên đối tượng' }));
+    if (!isCurrentUpload && !usingForm && !values.queryText.trim()) {
+      setErrors((prev) => ({ ...prev, queryText: 'Vui lòng nhập thông tin cần tra cứu' }));
       return;
     }
 
+    // Form mode carries the same requirements the API enforces: something to
+    // identify the person by, and a unit to resolve. Checked here only so the
+    // operator sees which box is missing — the server refuses either way.
+    if (!isCurrentUpload && usingForm) {
+      const identityMissing = !values.identifier.trim() && !values.fullName.trim();
+      const unitMissing = !values.department.trim();
+      if (identityMissing || unitMissing) {
+        setErrors((prev) => ({
+          ...prev,
+          identifier: identityMissing ? 'Nhập mã số cán bộ hoặc họ và tên' : undefined,
+          fullName: identityMissing ? 'Nhập họ và tên hoặc mã số cán bộ' : undefined,
+          department: unitMissing ? 'Đơn vị công tác là bắt buộc' : undefined,
+        }));
+        return;
+      }
+      setErrors((prev) => ({ ...prev, identifier: undefined, fullName: undefined, department: undefined }));
+    }
+
     // Strict validation for birthYear if provided
-    if (formValues.birthYear && formValues.birthYear.trim()) {
-      const yearStr = formValues.birthYear.trim();
+    if (values.birthYear && values.birthYear.trim()) {
+      const yearStr = values.birthYear.trim();
       const yearNum = parseInt(yearStr, 10);
       if (!/^\d{4}$/.test(yearStr) || isNaN(yearNum) || yearNum < 1920 || yearNum > 2026) {
         setErrors((prev) => ({
@@ -521,146 +804,114 @@ export default function CABQPVerification() {
 
     const startTime = Date.now();
 
+    // 1. Try real FastAPI backend API if available
     try {
-      let response;
-      if (isCurrentUpload && uploadedFile) {
+      let caseId = null;
+
+      const idempotency = () => ({
+        'Idempotency-Key': `web-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      });
+
+      if (correctedFrom) {
+        // The operator edited what OCR read. Submit those values as a new Case
+        // linked to the original, so the machine's first reading stays on record
+        // and the server can report exactly which fields a human overrode.
+        const response = await axios.post(
+          `/api/v1/cases/text`,
+          { ...structuredPayload(values), corrected_from_case_id: correctedFrom },
+          { headers: idempotency(), timeout: 30000 }
+        );
+        caseId = response?.data?.case_id;
+        setCorrectedFields(response?.data?.corrected_fields || []);
+      } else if (isCurrentUpload && uploadedFile && pendingCaseId) {
+        // The file was already uploaded and OCR'd when it was selected
+        // (handleProcessFile) — reuse that case instead of re-uploading and
+        // re-running OCR a second time.
+        caseId = pendingCaseId;
+        setCorrectedFields([]);
+      } else if (isCurrentUpload && uploadedFile) {
         const formData = new FormData();
         formData.append('file', uploadedFile);
-        if (formValues.fullName) {
-          formData.append('full_name_hint', formValues.fullName);
+        if (values.birthYear) {
+          formData.append('as_of_date', `${values.birthYear}-01-01`);
         }
-        response = await axios.post(`${API_BASE_URL}/api/v1/cases/upload`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 4000,
+        const response = await axios.post(`/api/v1/cases/file`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data', ...idempotency() },
+          timeout: 120000,
         });
+        caseId = response?.data?.case_id;
+        setCorrectedFields([]);
+      } else if (usingForm) {
+        const response = await axios.post(`/api/v1/cases/text`, structuredPayload(values), {
+          headers: idempotency(),
+          timeout: 30000,
+        });
+        caseId = response?.data?.case_id;
+        setCorrectedFields([]);
       } else {
-        const payload = {
-          input_type: 'MANUAL_TEXT',
-          subject: {
-            full_name: (formValues.fullName || '').trim(),
-            birth_year: formValues.birthYear ? String(formValues.birthYear).trim() : null,
-            position: formValues.position ? formValues.position.trim() : null,
-            department: formValues.department ? formValues.department.trim() : null,
-            identifier: formValues.identifier ? formValues.identifier.trim() : null,
-            extra_info: formValues.extraInfo ? formValues.extraInfo.trim() : null,
-          },
-        };
-        response = await axios.post(`${API_BASE_URL}/api/v1/cases/verify`, payload, {
-          timeout: 4000,
-        });
+        const response = await axios.post(
+          `/api/v1/cases/text`,
+          { text: values.queryText.trim(), input_mode: 'TEXT' },
+          { headers: idempotency(), timeout: 30000 }
+        );
+        caseId = response?.data?.case_id;
+        setCorrectedFields([]);
       }
 
-      // Ensure loading state lasts at least 1.8s for smooth UI feedback
-      const elapsedTime = Date.now() - startTime;
-      const remainingTime = Math.max(0, 1800 - elapsedTime);
-
-      setTimeout(() => {
-        const caseResult = response.data;
-        setCurrentCaseData(caseResult);
-
-        // Map backend workflow & resolution to UI State
-        let resolvedState = 'verified';
-        let org = caseResult.organization_type || 'BCA';
-
-        if (caseResult.resolution_status === 'AMBIGUOUS' || caseResult.workflow_status === 'NEED_REVIEW') {
-          if (caseResult.candidates && caseResult.candidates.length > 0) {
-            resolvedState = 'needs-verification';
-          } else {
-            resolvedState = 'no-conclusion';
-          }
-        } else if (caseResult.resolution_status === 'NOT_FOUND') {
-          resolvedState = 'no-conclusion';
-        } else if (caseResult.organization_type === 'BCA' || caseResult.organization_type === 'BQP') {
-          resolvedState = 'verified';
-        } else {
-          resolvedState = 'no-conclusion';
+      if (caseId) {
+        // Document cases process asynchronously on the worker (OCR can take
+        // 10-40s); poll until the verification result lands instead of a
+        // single GET with a short timeout, which used to fail closed into
+        // the fabricated offline fallback below on every real OCR upload.
+        let caseDetail = null;
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          const detailRes = await axios.get(`/api/v1/cases/${caseId}`, { timeout: 5000 });
+          caseDetail = detailRes.data;
+          if (caseDetail?.result || caseDetail?.case?.workflow_status === 'FAILED') break;
+          await new Promise((resolve) => setTimeout(resolve, 1500));
         }
+        const resolvedState = resolvedStateFromDetail(caseDetail);
 
-        setAppState(resolvedState);
-        addCaseToHistory(resolvedState, org, caseResult.case_code);
-      }, remainingTime);
-    } catch (err) {
-      console.warn('API backend not reachable, using resilient Quality-first local heuristic:', err.message);
-      // Resilient local evaluation fallback matching business requirements
-      setTimeout(() => {
-        const rawName = (formValues.fullName || '').trim();
-        const nameLower = rawName.toLowerCase();
-        const rawDept = (formValues.department || '').trim();
-        const deptLower = rawDept.toLowerCase();
-        const rawId = (formValues.identifier || '').trim().toUpperCase();
+        const extracted = caseDetail.extracted || {};
+        setFormValues((prev) => ({
+          ...prev,
+          fullName: extracted.subject_name || prev.fullName,
+          position: extracted.position || prev.position,
+          department: extracted.current_unit_raw || prev.department,
+          identifier: extracted.subject_code || prev.identifier,
+        }));
 
-        const isCaId = rawId.startsWith('CA-') || rawId.startsWith('BCA-') || rawId.startsWith('CAND-');
-        const isCaDept =
-          deptLower.includes('công an') ||
-          deptLower.includes('csdt') ||
-          deptLower.includes('annd') ||
-          deptLower.includes('cscđ') ||
-          deptLower.includes('bca') ||
-          deptLower.includes('an ninh');
+        const caseResult = buildCaseResultFromDetail(caseId, caseDetail);
 
-        const isBqpId = rawId.startsWith('BQP-') || rawId.startsWith('QD-') || rawId.startsWith('QĐ-');
-        const isBqpDept =
-          deptLower.includes('quân') ||
-          deptLower.includes('bqp') ||
-          deptLower.includes('tác chiến') ||
-          deptLower.includes('sư đoàn') ||
-          deptLower.includes('quốc phòng');
-
-        const isCivilOrOther =
-          deptLower.includes('dân sự') ||
-          deptLower.includes('công ty') ||
-          deptLower.includes('ngoài ngành') ||
-          rawId.startsWith('DS-');
-
-        const isAmbiguousName = nameLower.includes('bình') || nameLower.includes('binh');
-        const isConflict = (isCaId && isBqpDept) || (isBqpId && isCaDept);
-
-        let resolvedState = 'no-conclusion';
-        let org = 'OTHER';
-
-        if (isConflict || isAmbiguousName) {
-          resolvedState = 'needs-verification';
-          org = isBqpDept ? 'BQP' : 'BCA';
-        } else if (isCaId || isCaDept) {
-          resolvedState = 'verified';
-          org = 'BCA';
-        } else if (isBqpId || isBqpDept) {
-          resolvedState = 'verified';
-          org = 'BQP';
-        } else if (
-          (nameLower.includes('nguyễn văn a') || nameLower.includes('văn a')) &&
-          (rawId === 'CA-8492' || rawDept.includes('Đơn vị X') || rawDept.includes('Công an'))
-        ) {
-          resolvedState = 'verified';
-          org = 'BCA';
-        } else if (nameLower.includes('phạm quốc dũng') || nameLower.includes('quốc dũng')) {
-          resolvedState = 'verified';
-          org = 'BQP';
-        } else {
-          // If code is unusual (e.g. AS-..., XYZ-...) or name is random without valid CA/BQP signals
-          resolvedState = 'no-conclusion';
-          org = 'OTHER';
-        }
-
-        setCurrentCaseData({
-          case_code: `#HS-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-          organization_type: org,
-          resolution_status:
-            resolvedState === 'verified'
-              ? 'MATCHED'
-              : resolvedState === 'needs-verification'
-              ? 'AMBIGUOUS'
-              : 'NOT_FOUND',
-        });
-
-        setAppState(resolvedState);
-        addCaseToHistory(resolvedState, org);
-      }, 1600);
+        const remainingTime = Math.max(0, 1600 - (Date.now() - startTime));
+        setTimeout(() => {
+          setCurrentCaseData(caseResult);
+          setAppState(resolvedState);
+          syncHistoryFromBackend();
+        }, remainingTime);
+        return;
+      }
+    } catch (backendErr) {
+      console.error('Không thể tra cứu qua API:', backendErr);
+      setApiError(
+        backendErr?.response?.data?.detail?.message ||
+        backendErr?.response?.data?.detail ||
+        'Không thể kết nối hệ thống đối chiếu. Vui lòng thử lại.'
+      );
+      setAppState('initial');
+      return;
     }
+
+    // The backend call above completed without throwing but returned no
+    // usable case_id — never fabricate a verdict client-side. Surface the
+    // same error state the network-failure catch above uses.
+    setApiError('Không nhận được kết quả hợp lệ từ hệ thống đối chiếu. Vui lòng thử lại.');
+    setAppState('initial');
   };
 
   const handleReset = () => {
     setFormValues({
+      queryText: '',
       fullName: '',
       birthYear: '',
       position: '',
@@ -676,31 +927,24 @@ export default function CABQPVerification() {
   return (
     <div className="h-screen w-full flex flex-col relative bg-slate-50 text-slate-900 font-sans antialiased select-none overflow-hidden">
       {/* Background Decorative Grid and Gradients */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f5eb408_1px,transparent_1px),linear-gradient(to_bottom,#1f5eb408_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
-      <div className="absolute -top-32 -right-32 w-[650px] h-[650px] rounded-full bg-blue-500/5 blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-32 -left-32 w-[550px] h-[550px] rounded-full bg-blue-500/4 blur-3xl pointer-events-none" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#c8102e08_1px,transparent_1px),linear-gradient(to_bottom,#c8102e08_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
+      <div className="absolute -top-32 -right-32 w-[650px] h-[650px] rounded-full bg-red-500/5 blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-32 -left-32 w-[550px] h-[550px] rounded-full bg-red-500/4 blur-3xl pointer-events-none" />
 
       {/* Header */}
-      <header className="h-[56px] sm:h-[60px] flex-shrink-0 bg-white border-b border-slate-200 px-3.5 sm:px-6 md:px-8 flex items-center justify-between z-40 transition-all">
-        {/* Brand Left */}
+      <header className="h-[60px] sm:h-[64px] flex-shrink-0 bg-white border-b border-slate-200 px-4 sm:px-6 md:px-8 flex items-center justify-between z-40 transition-all">
+        {/* Brand Left - Full Brand Logo */}
         <div
-          className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group min-w-0"
+          className="flex items-center cursor-pointer group flex-shrink-0 py-1 border-l-[3px] border-[#c8102e] pl-3"
           onClick={() => {
             setAppState('initial');
             setCurrentNav('search');
           }}
           title="Quay lại trang chủ tra cứu"
         >
-          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-blue-600 flex items-center justify-center shadow-xs flex-shrink-0 text-white group-hover:bg-blue-700 transition-colors">
-            <ShieldCheck className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[13px] sm:text-[14px] font-bold text-slate-900 tracking-tight group-hover:text-blue-600 transition-colors uppercase leading-tight truncate">
-              HỆ THỐNG TRA CỨU ĐỐI TƯỢNG CA/BQP
-            </div>
-            <div className="text-[10.5px] sm:text-[11.5px] text-slate-500 font-medium mt-0.5 truncate hidden sm:block">
-              Xác định &amp; đối chiếu phạm vi quản lý nghiệp vụ chuẩn hóa (2026)
-            </div>
+          <div className="hidden sm:block leading-tight">
+            <strong className="block text-slate-900 text-[13px] font-bold uppercase tracking-wide">Hệ thống xác minh nhân sự</strong>
+            <span className="block text-slate-500 text-[11px]">Bộ Công An – Bộ Quốc Phòng</span>
           </div>
         </div>
 
@@ -712,14 +956,14 @@ export default function CABQPVerification() {
               onClick={() => {
                 setCurrentNav('search');
               }}
-              className={`relative flex items-center gap-1.5 sm:gap-2 h-full text-[13px] sm:text-[14.5px] font-semibold transition-colors cursor-pointer py-2 ${
-                currentNav === 'search' ? 'text-blue-600' : 'text-slate-500 hover:text-slate-900'
+              className={`relative flex items-center gap-1.5 sm:gap-2 h-full text-sm sm:text-base font-semibold transition-colors cursor-pointer py-2 ${
+                currentNav === 'search' ? 'text-red-600' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Search className="w-4 h-4" />
               <span>Tra cứu</span>
               {currentNav === 'search' && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-blue-600 rounded-t-sm" />
+                <span className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-red-600 rounded-t-sm" />
               )}
             </button>
 
@@ -728,19 +972,61 @@ export default function CABQPVerification() {
               onClick={() => {
                 setCurrentNav('history');
               }}
-              className={`relative flex items-center gap-1.5 sm:gap-2 h-full text-[13px] sm:text-[14.5px] font-medium transition-colors cursor-pointer py-2 ${
-                currentNav === 'history' ? 'text-blue-600 font-semibold' : 'text-slate-500 hover:text-slate-900'
+              className={`relative flex items-center gap-1.5 sm:gap-2 h-full text-sm sm:text-base font-semibold transition-colors cursor-pointer py-2 ${
+                currentNav === 'history' ? 'text-red-600' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Clock className="w-4 h-4" />
               <span>Lịch sử</span>
-              <span className="px-1.5 py-0.5 rounded-full text-[10.5px] sm:text-[11px] font-bold bg-blue-100 text-blue-700">
+              <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">
                 {historyList.length}
               </span>
               {currentNav === 'history' && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-blue-600 rounded-t-sm" />
+                <span className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-red-600 rounded-t-sm" />
               )}
             </button>
+
+            {hasAdminMenu && (
+              <div className="relative h-full">
+                <button
+                  type="button"
+                  onClick={() => setIsAdminMenuOpen((x) => !x)}
+                  className={`relative flex items-center gap-1.5 sm:gap-2 h-full text-sm sm:text-base font-semibold transition-colors cursor-pointer py-2 ${
+                    currentNav.startsWith('admin') || currentNav === 'reviews'
+                      ? 'text-red-600'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Quản trị</span>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                  {(currentNav.startsWith('admin') || currentNav === 'reviews') && (
+                    <span className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-red-600 rounded-t-sm" />
+                  )}
+                </button>
+                {isAdminMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-md border border-slate-200 shadow-xl py-1.5 z-50">
+                    {[
+                      { nav: 'reviews', label: 'Hàng đợi đối soát', allowed: canReview },
+                      { nav: 'admin-units', label: 'Danh mục đơn vị', allowed: canAdminUnits },
+                      { nav: 'admin-persons', label: 'Danh mục cá nhân', allowed: canAdminPersons },
+                      { nav: 'admin-audit', label: 'Nhật ký kiểm toán', allowed: canViewAudit },
+                      { nav: 'admin-users', label: 'Quản trị tài khoản', allowed: canAdminUsers },
+                    ]
+                      .filter((entry) => entry.allowed)
+                      .map((entry) => (
+                        <button
+                          key={entry.nav}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                          onClick={() => { setCurrentNav(entry.nav); setIsAdminMenuOpen(false); }}
+                        >
+                          {entry.label}
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
           </nav>
 
           <div className="hidden sm:block h-7 w-[1px] bg-slate-200" />
@@ -749,43 +1035,34 @@ export default function CABQPVerification() {
           <div className="relative">
             <button
               onClick={() => setIsAccountOpen(!isAccountOpen)}
-              className="flex items-center gap-2 sm:gap-3 py-1.5 px-2 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-left group"
+              className="flex items-center gap-2 sm:gap-3 py-1.5 px-2 rounded-md hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-left group cursor-pointer"
             >
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-blue-100 text-blue-600 font-bold text-xs flex items-center justify-center border border-blue-200 shadow-xs flex-shrink-0">
-                CB
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-red-100 text-red-600 font-bold text-xs flex items-center justify-center border border-red-200 shadow-xs flex-shrink-0">
+                {(user?.displayName || user?.username || '??').slice(0, 2).toUpperCase()}
               </div>
               <div className="hidden md:block">
-                <div className="text-[13px] font-semibold text-slate-900 group-hover:text-blue-600 leading-tight">
-                  Cán bộ đối soát
+                <div className="text-sm font-semibold text-slate-900 group-hover:text-red-600 leading-tight">
+                  {user?.displayName || user?.username || 'Người dùng'}
                 </div>
-                <div className="text-[11.5px] text-slate-500 mt-0.5">Mã định danh #9928</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  {Array.from(roles).filter((r) => ROLE_LABELS[r]).map((r) => ROLE_LABELS[r]).join(', ') || 'Đã đăng nhập'}
+                </div>
               </div>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-0.5" />
             </button>
 
             {/* Account Dropdown */}
             {isAccountOpen && (
-              <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg border border-slate-200 shadow-xl py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+              <div className="absolute right-0 mt-2 w-64 bg-white rounded-md border border-slate-200 shadow-xl py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
                 <div className="px-4 py-2 border-b border-slate-100">
-                  <p className="text-[13px] font-bold text-slate-900">Nguyễn Hoàng Long (CB-9928)</p>
-                  <p className="text-[12px] text-slate-500">Phòng Nghiệp vụ &amp; Quản trị Dữ liệu</p>
-                  <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    Phiên làm việc bảo mật
-                  </div>
-                </div>
-                <div className="py-1">
-                  <button className="w-full text-left px-4 py-2 text-[13px] text-slate-700 hover:bg-slate-50 flex items-center gap-2.5">
-                    <ShieldCheck className="w-4 h-4 text-slate-400" />
-                    Chứng thư số &amp; Quyền hạn
-                  </button>
-                  <button className="w-full text-left px-4 py-2 text-[13px] text-slate-700 hover:bg-slate-50 flex items-center gap-2.5">
-                    <Settings className="w-4 h-4 text-slate-400" />
-                    Cài đặt tham số đối chiếu
-                  </button>
+                  <p className="text-sm font-bold text-slate-900">{user?.displayName || user?.username}</p>
+                  <p className="text-xs text-slate-500">{user?.username}</p>
                 </div>
                 <div className="border-t border-slate-100 pt-1">
-                  <button className="w-full text-left px-4 py-2 text-[13px] text-red-600 hover:bg-red-50 flex items-center gap-2.5">
+                  <button
+                    className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2.5"
+                    onClick={() => onLogout && onLogout()}
+                  >
                     <LogOut className="w-4 h-4" />
                     Đăng xuất hệ thống
                   </button>
@@ -798,13 +1075,21 @@ export default function CABQPVerification() {
 
       {/* Main Body */}
       <main className="flex-1 w-full flex flex-col relative z-10 overflow-hidden min-h-0">
-        {currentNav === 'history' ? (
+        {currentNav === 'reviews' ? (
+          <ReviewsPage apiBaseUrl={API_BASE_URL} user={user} />
+        ) : currentNav === 'admin-units' ? (
+          <RegistryAdminPage apiBaseUrl={API_BASE_URL} />
+        ) : currentNav === 'admin-persons' ? (
+          <PersonRegistryAdminPage apiBaseUrl={API_BASE_URL} />
+        ) : currentNav === 'admin-audit' ? (
+          <AuditPage apiBaseUrl={API_BASE_URL} />
+        ) : currentNav === 'admin-users' ? (
+          <UsersAdminPage apiBaseUrl={API_BASE_URL} />
+        ) : currentNav === 'history' ? (
           <HistoryView
             historyList={historyList}
             onSelectCase={handleSelectHistoryCase}
-            onViewOriginalDossier={handleViewHistoryOriginalDossier}
-            onViewDetailedCompare={handleViewHistoryDetailedCompare}
-            onClearHistory={handleClearHistory}
+            onRefresh={syncHistoryFromBackend}
             onBackToSearch={() => {
               setCurrentNav('search');
               setAppState('initial');
@@ -815,51 +1100,103 @@ export default function CABQPVerification() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
               {/* Left Hero Area & Search Card */}
               <div className="lg:col-span-7 flex flex-col justify-center">
-                <div className="mb-3 sm:mb-4">
-                  <h1 className="text-[26px] sm:text-[30px] lg:text-[32px] font-bold text-slate-900 leading-tight tracking-tight">
-                    Tra cứu đối tượng <span className="text-blue-600">CA/BQP</span>
+                <div className="mb-2 sm:mb-3">
+                  <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold text-slate-900 leading-tight tracking-tight">
+                    Tra cứu đối tượng <span className="text-red-600">CA/BQP</span>
                   </h1>
-                  <p className="text-[13px] sm:text-[13.5px] text-slate-600 mt-1 max-w-[600px] leading-relaxed">
+                  <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-[540px] leading-relaxed">
                     Nhập thông tin hoặc tải tài liệu để hệ thống phân tích và xác minh phạm vi quản lý nghiệp vụ theo quy chuẩn liên ngành 2026.
                   </p>
                 </div>
 
                 {/* Search Form Card */}
-                <div className="w-full max-w-[620px] bg-white rounded-2xl border border-slate-200 shadow-sm p-4.5 sm:p-5">
+                <div className="w-full max-w-[540px] bg-white rounded-md border border-slate-200 shadow-xs p-3.5 sm:p-4">
                   {/* Form Tab Switcher */}
-                  <div className="flex items-center p-1 bg-slate-100 rounded-xl mb-3.5 border border-slate-200/70">
+                  <div className="flex items-center p-1 bg-slate-100 rounded-md mb-2.5 border border-slate-200/70">
                     <button
                       type="button"
                       onClick={() => setActiveTab('manual')}
-                      className={`flex-1 py-2 px-4 rounded-lg text-[13.5px] sm:text-[14px] font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      className={`flex-1 py-1.5 px-3 rounded-md text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                         activeTab === 'manual'
-                          ? 'bg-white text-blue-600 shadow-xs border border-slate-200'
+                          ? 'bg-white text-red-600 shadow-xs border border-slate-200'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      <Edit3 className="w-4 h-4 text-blue-600" />
+                      <span className="material-symbols-outlined text-red-600 text-xs leading-none flex items-center">edit</span>
                       <span>Nhập thông tin</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setActiveTab('upload')}
-                      className={`flex-1 py-1.5 px-3 sm:px-4 rounded-lg text-[13px] sm:text-[13.5px] font-medium flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+                      className={`flex-1 py-1.5 px-3 rounded-md text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                         activeTab === 'upload'
-                          ? 'bg-white text-blue-600 shadow-xs border border-slate-200'
+                          ? 'bg-white text-red-600 shadow-xs border border-slate-200'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      <UploadCloud className="w-4 h-4" />
+                      <span className="material-symbols-outlined text-red-600 text-xs leading-none flex items-center">upload_file</span>
                       <span>Tải tài liệu</span>
                     </button>
                   </div>
 
                   {activeTab === 'manual' ? (
                     <form onSubmit={handleSearch} noValidate>
+                      {apiError && (
+                        <div className="mb-3 rounded-md bg-red-50 px-3 py-2.5 text-xs leading-relaxed text-red-700">
+                          {String(apiError)}
+                        </div>
+                      )}
+                      <div className="mb-3 inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
+                        {[
+                          { id: 'form', label: 'Theo biểu mẫu' },
+                          { id: 'text', label: 'Tra cứu tự do' },
+                        ].map((mode) => (
+                          <button
+                            key={mode.id}
+                            type="button"
+                            onClick={() => { setEntryMode(mode.id); setErrors({}); }}
+                            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                              entryMode === mode.id
+                                ? 'bg-white text-red-700 shadow-xs'
+                                : 'text-slate-500 hover:text-slate-700'
+                            }`}
+                          >
+                            {mode.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className={entryMode === 'text' ? 'mb-3' : 'hidden'}>
+                        <label className="mb-1.5 block text-[13px] font-semibold text-slate-900">
+                          Thông tin cần tra cứu
+                        </label>
+                        <textarea
+                          name="queryText"
+                          rows={6}
+                          value={formValues.queryText}
+                          onChange={handleInputChange}
+                          placeholder="Ví dụ: Nguyễn Văn A, sinh năm 1985, số hiệu 012345, hiện công tác tại..."
+                          className={`w-full min-h-[150px] resize-y rounded-md border bg-white p-3.5 text-sm leading-6 text-slate-900 outline-none transition-all ${
+                            errors.queryText
+                              ? 'border-red-400 focus:ring-2 focus:ring-red-100'
+                              : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100'
+                          }`}
+                        />
+                        {errors.queryText && <p className="mt-1 text-xs font-medium text-red-500">{errors.queryText}</p>}
+                        <p className="mt-1.5 text-[11.5px] leading-relaxed text-slate-500">
+                          Có thể nhập tên, mã cá nhân, đơn vị, chức vụ hoặc nội dung mô tả bất kỳ. Hệ thống sẽ tự trích xuất thông tin.
+                        </p>
+                      </div>
+
+                      <div className={entryMode === 'form' ? '' : 'hidden'}>
+                      <p className="mb-2.5 rounded-md bg-red-50 px-3 py-2 text-[11.5px] leading-relaxed text-red-800">
+                        Bắt buộc: <strong>mã số cán bộ</strong> hoặc <strong>họ và tên</strong> (ít nhất một),
+                        và <strong>đơn vị công tác</strong>.
+                      </p>
                       {/* Row 1: Họ và tên (Full width) */}
-                      <div className="mb-3 sm:mb-3.5">
-                        <label className="block text-[13px] font-semibold text-slate-900 mb-1">
+                      <div className="mb-2.5">
+                        <label className="block text-xs sm:text-[13px] font-semibold text-slate-900 mb-0.5">
                           Họ và tên <span className="text-red-500">*</span>
                         </label>
                         <input
@@ -867,24 +1204,24 @@ export default function CABQPVerification() {
                           name="fullName"
                           value={formValues.fullName}
                           onChange={handleInputChange}
-                          placeholder="Nguyễn Văn A"
-                          className={`w-full h-10 sm:h-10.5 px-3.5 rounded-lg border text-[13.5px] sm:text-[14px] bg-white transition-all outline-none ${
+                          placeholder="Nhập họ và tên đối tượng..."
+                          className={`w-full h-8.5 sm:h-9 px-3 rounded-md border text-xs sm:text-sm bg-white transition-all outline-none ${
                             errors.fullName
                               ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600'
-                              : 'border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-slate-900'
+                              : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
                           }`}
                         />
                         {errors.fullName && (
-                          <p className="text-[12px] text-red-500 mt-1">
+                          <p className="text-xs text-red-500 mt-1 font-medium">
                             {errors.fullName}
                           </p>
                         )}
                       </div>
 
                       {/* Row 2: Năm sinh & Chức vụ (2 columns on sm+, 1 on mobile) */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-3.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 mb-2.5">
                         <div>
-                          <label className="block text-[13px] font-semibold text-slate-900 mb-1">
+                          <label className="block text-xs sm:text-[13px] font-semibold text-slate-900 mb-0.5">
                             Năm sinh
                           </label>
                           <input
@@ -892,16 +1229,16 @@ export default function CABQPVerification() {
                             name="birthYear"
                             value={formValues.birthYear}
                             onChange={handleInputChange}
-                            placeholder="1985"
+                            placeholder="Năm sinh (VD: 1990)..."
                             maxLength={5}
-                            className={`w-full h-10 sm:h-10.5 px-3.5 rounded-lg border text-[13.5px] sm:text-[14px] bg-white transition-all outline-none ${
+                            className={`w-full h-8.5 sm:h-9 px-3 rounded-md border text-xs sm:text-sm bg-white transition-all outline-none ${
                               errors.birthYear
                                 ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600 bg-red-50/20'
-                                : 'border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-slate-900'
+                                : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
                             }`}
                           />
                           {errors.birthYear && (
-                            <p className="text-[12px] text-red-500 mt-1 font-medium flex items-center gap-1">
+                            <p className="text-xs text-red-500 mt-1 font-medium flex items-center gap-1">
                               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
                               <span>{errors.birthYear}</span>
                             </p>
@@ -909,7 +1246,7 @@ export default function CABQPVerification() {
                         </div>
 
                         <div>
-                          <label className="block text-[13px] font-semibold text-slate-900 mb-1">
+                          <label className="block text-xs sm:text-[13px] font-semibold text-slate-900 mb-0.5">
                             Chức vụ
                           </label>
                           <input
@@ -917,58 +1254,79 @@ export default function CABQPVerification() {
                             name="position"
                             value={formValues.position}
                             onChange={handleInputChange}
-                            placeholder="Cán bộ điều tra"
-                            className="w-full h-10 sm:h-10.5 px-3.5 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13.5px] sm:text-[14px] bg-white text-slate-900 transition-all outline-none"
+                            placeholder="Chức vụ / Vị trí công tác..."
+                            className="w-full h-8.5 sm:h-9 px-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-xs sm:text-sm bg-white text-slate-900 transition-all outline-none"
                           />
                         </div>
                       </div>
 
                       {/* Row 3: Đơn vị & Số hiệu / Mã định danh (2 columns on sm+, 1 on mobile) */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-3.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 mb-2.5">
                         <div>
-                          <label className="block text-[13px] font-semibold text-slate-900 mb-1">
-                            Đơn vị
+                          <label className="block text-xs sm:text-[13px] font-semibold text-slate-900 mb-0.5">
+                            Đơn vị công tác <span className="text-red-500">*</span>
                           </label>
                           <div className="relative">
-                            <select
+                            <input
+                              list="department-options"
+                              type="text"
                               name="department"
                               value={formValues.department}
                               onChange={handleInputChange}
-                              className="w-full h-10 sm:h-10.5 px-3.5 pr-9 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13.5px] sm:text-[14px] bg-white text-slate-900 transition-all outline-none appearance-none cursor-pointer"
-                            >
-                              <option value="">Chọn đơn vị nghiệp vụ</option>
-                              <option value="Đơn vị X - Cục CSDT">Đơn vị X - Cục CSDT (Bộ Công an)</option>
-                              <option value="Công an quận Hoàng Mai">Công an quận Hoàng Mai (Hà Nội)</option>
-                              <option value="Học viện ANND">Học viện An ninh Nhân dân</option>
-                              <option value="Quân khu 7">Quân khu 7 (Bộ Quốc phòng)</option>
-                              <option value="Bộ Tư lệnh CSCĐ">Bộ Tư lệnh Cảnh sát Cơ động</option>
-                              <option value="Cục Tác chiến">Cục Tác chiến - BQP</option>
-                              <option value="Đơn vị dân sự ngoài ngành">Đơn vị ngoài ngành (Dân sự)</option>
-                            </select>
-                            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-400">
-                              <ChevronDown className="w-4 h-4" />
+                              placeholder="Nhập hoặc chọn đơn vị..."
+                              className={`w-full h-8.5 sm:h-9 px-3 pr-8 rounded-md border text-xs sm:text-sm bg-white transition-all outline-none ${
+                                errors.department
+                                  ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600'
+                                  : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
+                              }`}
+                            />
+                            <datalist id="department-options">
+                              <option value="Đơn vị X - Cục CSDT (Bộ Công an)" />
+                              <option value="Công an quận Hoàng Mai (Hà Nội)" />
+                              <option value="Học viện An ninh Nhân dân" />
+                              <option value="Quân khu 7 (Bộ Quốc phòng)" />
+                              <option value="Bộ Tư lệnh Cảnh sát Cơ động" />
+                              <option value="Cục Tác chiến - BQP" />
+                              <option value="Sư đoàn 312 (Quân đoàn 12)" />
+                              <option value="Cục Cảnh sát Hình sự (C02)" />
+                              <option value="Công an TP Hà Nội" />
+                              <option value="Công an TP Hồ Chí Minh" />
+                              <option value="Đơn vị dân sự ngoài ngành" />
+                            </datalist>
+                            <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none text-slate-400">
+                              <Building2 className="w-3.5 h-3.5" />
                             </div>
                           </div>
+                          {errors.department && (
+                            <p className="text-xs text-red-500 mt-1 font-medium">{errors.department}</p>
+                          )}
                         </div>
 
                         <div>
-                          <label className="block text-[13px] font-semibold text-slate-900 mb-1">
-                            Số hiệu / Mã định danh
+                          <label className="block text-xs sm:text-[13px] font-semibold text-slate-900 mb-0.5">
+                            Mã số cán bộ <span className="text-red-500">*</span>
                           </label>
                           <input
                             type="text"
                             name="identifier"
                             value={formValues.identifier}
                             onChange={handleInputChange}
-                            placeholder="CA-8492"
-                            className="w-full h-10 sm:h-10.5 px-3.5 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13.5px] sm:text-[14px] bg-white text-slate-900 transition-all outline-none uppercase"
+                            placeholder="Số hiệu / Mã định danh / CCCD..."
+                            className={`w-full h-8.5 sm:h-9 px-3 rounded-md border text-xs sm:text-sm bg-white transition-all outline-none uppercase ${
+                              errors.identifier
+                                ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600'
+                                : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
+                            }`}
                           />
+                          {errors.identifier && (
+                            <p className="text-xs text-red-500 mt-1 font-medium">{errors.identifier}</p>
+                          )}
                         </div>
                       </div>
 
                       {/* Row 4: Thông tin bổ sung (Full width textarea) */}
-                      <div className="mb-4">
-                        <label className="block text-[13px] font-semibold text-slate-900 mb-1">
+                      <div className="mb-3">
+                        <label className="block text-xs sm:text-[13px] font-semibold text-slate-900 mb-0.5">
                           Thông tin bổ sung
                         </label>
                         <textarea
@@ -977,26 +1335,27 @@ export default function CABQPVerification() {
                           value={formValues.extraInfo}
                           onChange={handleInputChange}
                           placeholder="Nhập số quyết định, phân công, ghi chú hồ sơ vụ việc hoặc dấu hiệu nghiệp vụ khác..."
-                          className="w-full h-18 sm:h-20 p-3 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13px] sm:text-[13.5px] bg-white text-slate-900 transition-all outline-none resize-none leading-relaxed"
+                          className="w-full h-15 sm:h-16 p-2.5 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-xs sm:text-sm bg-white text-slate-900 transition-all outline-none resize-none leading-relaxed"
                         />
+                      </div>
                       </div>
 
                       {/* Row 5: Action buttons */}
-                      <div className="flex flex-wrap items-center gap-3 pt-1">
+                      <div className="flex flex-wrap items-center gap-2.5 pt-0.5">
                         <button
                           type="submit"
-                          className="h-10 sm:h-10.5 px-6 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-[13.5px] sm:text-[14px] flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
+                          className="h-8.5 sm:h-9 px-5 rounded-md bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                         >
-                          <Search className="w-4 h-4" />
+                          <Search className="w-3.5 h-3.5" />
                           <span>Tra cứu</span>
                         </button>
 
                         <button
                           type="button"
                           onClick={handleReset}
-                          className="h-10 sm:h-10.5 px-5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-medium text-[13.5px] sm:text-[14px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                          className="h-8.5 sm:h-9 px-4 rounded-md bg-white border border-slate-200 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-medium text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                         >
-                          <RotateCcw className="w-4 h-4 text-slate-400" />
+                          <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
                           <span>Xóa làm lại</span>
                         </button>
                       </div>
@@ -1009,7 +1368,7 @@ export default function CABQPVerification() {
                         ref={mainFileInputRef}
                         type="file"
                         className="hidden"
-                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.json,.csv,.log"
                         onChange={(e) => {
                           if (e.target.files && e.target.files[0]) {
                             handleProcessFile(e.target.files[0]);
@@ -1031,29 +1390,29 @@ export default function CABQPVerification() {
                             handleProcessFile(e.dataTransfer.files[0]);
                           }
                         }}
-                        className={`relative border-2 border-dashed rounded-xl p-3 text-center transition-all ${
+                        className={`relative border-2 border-dashed rounded-md p-3 text-center transition-all ${
                           isDragging
-                            ? 'border-blue-500 bg-blue-50/60'
+                            ? 'border-red-500 bg-red-50/60'
                             : uploadedFile
                             ? 'border-emerald-400 bg-emerald-50/20'
-                            : 'border-slate-200 hover:border-blue-400 bg-slate-50/40'
+                            : 'border-slate-200 hover:border-red-400 bg-slate-50/40'
                         }`}
                       >
                         {isExtracting ? (
                           <div className="py-4 flex flex-col items-center justify-center space-y-2">
-                            <div className="w-8 h-8 rounded-full border-2 border-blue-600 border-t-transparent animate-spin flex items-center justify-center">
-                              <Sparkles className="w-4 h-4 text-blue-600" />
+                            <div className="w-8 h-8 rounded-full border-2 border-red-600 border-t-transparent animate-spin flex items-center justify-center">
+                              <Scan className="w-4 h-4 text-red-600" />
                             </div>
                             <div>
-                              <p className="text-[13px] font-bold text-blue-900">Đang nhận diện quang học (OCR)...</p>
+                              <p className="text-[13px] font-bold text-red-900">Đang đọc nội dung tài liệu...</p>
                               <p className="text-[11.5px] text-slate-500">Trích xuất: Họ tên, Năm sinh, Đơn vị, Chức vụ</p>
                             </div>
                           </div>
                         ) : uploadedFile ? (
                           <div className="flex flex-col sm:flex-row items-center gap-3 text-left p-1">
                             {/* Thumbnail / Icon preview */}
-                            <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex-shrink-0 flex items-center justify-center shadow-inner">
-                              {filePreviewUrl ? (
+                            <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-md overflow-hidden border border-slate-200 bg-slate-100 flex-shrink-0 flex items-center justify-center shadow-inner">
+                              {filePreviewUrl && uploadedFile.type?.startsWith('image/') ? (
                                 <img
                                   src={filePreviewUrl}
                                   alt="Tài liệu tải lên"
@@ -1061,12 +1420,12 @@ export default function CABQPVerification() {
                                 />
                               ) : (
                                 <div className="flex flex-col items-center justify-center text-slate-400">
-                                  <FileText className="w-7 h-7 text-blue-500 mb-0.5" />
+                                  <FileText className="w-7 h-7 text-red-500 mb-0.5" />
                                   <span className="text-[9px] font-bold uppercase">{uploadedFile.name.split('.').pop()}</span>
                                 </div>
                               )}
                               <div className="absolute top-1 right-1 px-1 py-0.2 rounded bg-black/60 text-[9px] font-semibold text-white">
-                                {filePreviewUrl ? 'Ảnh' : 'File'}
+                                {uploadedFile.type?.startsWith('image/') ? 'Ảnh' : (uploadedFile.name.split('.').pop() || 'Tệp').toUpperCase()}
                               </div>
                             </div>
 
@@ -1078,13 +1437,10 @@ export default function CABQPVerification() {
                                     {uploadedFile.name}
                                   </h4>
                                   <p className="text-[11px] text-slate-500">
-                                    {(uploadedFile.size / 1024).toFixed(1)} KB • Tự động nhận diện OCR
+                                    {(uploadedFile.size / 1024).toFixed(1)} KB
                                   </p>
                                 </div>
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  <span>{extractedData?.confidence || '99.1%'} Khớp</span>
-                                </span>
+                                <UploadStatusBadge data={extractedData} />
                               </div>
 
                               {/* Key Extracted Info Chips */}
@@ -1104,14 +1460,14 @@ export default function CABQPVerification() {
                                 <button
                                   type="button"
                                   onClick={() => setIsOcrModalOpen(true)}
-                                  className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-[11.5px] flex items-center gap-1 transition-all cursor-pointer"
+                                  className="px-2.5 py-1 rounded bg-red-50 hover:bg-red-100 text-red-700 font-semibold text-[11.5px] flex items-center gap-1 transition-all cursor-pointer"
                                 >
                                   <Eye className="w-3 h-3" />
-                                  <span>Xem chi tiết OCR</span>
+                                  <span>Xem dữ liệu trích xuất</span>
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => mainFileInputRef.current?.click()}
+                                  onClick={() => openFilePicker(mainFileInputRef)}
                                   className="px-2.5 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-[11.5px] flex items-center gap-1 transition-all cursor-pointer"
                                 >
                                   <FolderOpen className="w-3 h-3 text-slate-400" />
@@ -1130,10 +1486,10 @@ export default function CABQPVerification() {
                           </div>
                         ) : (
                           <div
-                            onClick={() => mainFileInputRef.current?.click()}
+                            onClick={() => openFilePicker(mainFileInputRef)}
                             className="cursor-pointer py-2.5 flex flex-col items-center justify-center space-y-1.5"
                           >
-                            <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
                               <UploadCloud className="w-5 h-5" />
                             </div>
                             <div>
@@ -1145,8 +1501,8 @@ export default function CABQPVerification() {
                               </p>
                             </div>
                             <div className="pt-0.5">
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 font-semibold text-[12px] shadow-xs hover:bg-slate-50">
-                                <FolderOpen className="w-3.5 h-3.5 text-blue-600" />
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white border border-slate-200 text-slate-700 font-semibold text-[12px] shadow-xs hover:bg-slate-50">
+                                <FolderOpen className="w-3.5 h-3.5 text-red-600" />
                                 <span>Chọn ảnh / tài liệu từ máy</span>
                               </span>
                             </div>
@@ -1154,49 +1510,13 @@ export default function CABQPVerification() {
                         )}
                       </div>
 
-                      {/* Sample Test Documents */}
-                      <div className="p-2 bg-slate-50 rounded-lg border border-slate-200">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
-                            <Sparkles className="w-3 h-3 text-amber-500" />
-                            <span>Mẫu tài liệu nghiệp vụ thử nghiệm:</span>
-                          </span>
-                          <span className="text-[10.5px] text-slate-400">Chuẩn 2026</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleLoadSample('bca')}
-                            className="text-left p-1.5 rounded-lg bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer"
-                          >
-                            <span className="text-[11px] font-bold text-blue-700 block truncate">1. Ảnh thẻ CAND</span>
-                            <span className="text-[10px] text-slate-500 block truncate">Nguyễn Văn A • BCA</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleLoadSample('bqp')}
-                            className="text-left p-1.5 rounded-lg bg-white border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/30 transition-all cursor-pointer"
-                          >
-                            <span className="text-[11px] font-bold text-emerald-700 block truncate">2. QĐ BQP</span>
-                            <span className="text-[10px] text-slate-500 block truncate">Phạm Quốc Dũng • BQP</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleLoadSample('binh')}
-                            className="text-left p-1.5 rounded-lg bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50/30 transition-all cursor-pointer"
-                          >
-                            <span className="text-[11px] font-bold text-amber-700 block truncate">3. Hồ sơ xác minh</span>
-                            <span className="text-[10px] text-slate-500 block truncate">Trần Văn Bình • Quận</span>
-                          </button>
-                        </div>
-                      </div>
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-3 pt-1">
                         <button
                           type="button"
                           onClick={handleSearch}
-                          className="h-10 sm:h-10.5 px-6 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[13.5px] sm:text-[14px] flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
+                          className="h-10 sm:h-10.5 px-6 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold text-[13.5px] sm:text-[14px] flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
                         >
                           <Scan className="w-4 h-4" />
                           <span>Trích xuất &amp; Tra cứu</span>
@@ -1205,7 +1525,7 @@ export default function CABQPVerification() {
                         <button
                           type="button"
                           onClick={handleClearUploadedFile}
-                          className="h-10 sm:h-10.5 px-5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium text-[13.5px] sm:text-[14px] flex items-center justify-center gap-2 transition-all cursor-pointer"
+                          className="h-10 sm:h-10.5 px-5 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium text-[13.5px] sm:text-[14px] flex items-center justify-center gap-2 transition-all cursor-pointer"
                         >
                           <RotateCcw className="w-4 h-4 text-slate-400" />
                           <span>Làm lại</span>
@@ -1217,11 +1537,11 @@ export default function CABQPVerification() {
               </div>
 
               {/* Right Hero Illustration */}
-              <div className="lg:col-span-5 flex flex-col items-center justify-center relative select-none pointer-events-none mt-6 lg:mt-0">
-                <div className="relative w-full max-w-[340px] sm:max-w-[400px] lg:max-w-[440px] h-[220px] sm:h-[260px] lg:h-[290px] flex items-center justify-center">
+              <div className="lg:col-span-5 flex flex-col items-center justify-center relative select-none pointer-events-none mt-4 lg:mt-0">
+                <div className="relative w-full max-w-[280px] sm:max-w-[340px] lg:max-w-[370px] h-[180px] sm:h-[220px] lg:h-[240px] flex items-center justify-center">
                   {/* Geometric backdrops */}
-                  <div className="absolute -top-4 -right-4 w-[320px] h-[240px] rounded-[48%] bg-blue-100/40 opacity-60 blur-2xl" />
-                  <div className="absolute top-8 right-2 w-[260px] h-[180px] bg-blue-200/30 rounded-3xl transform rotate-6" />
+                  <div className="absolute -top-4 -right-4 w-[320px] h-[240px] rounded-[48%] bg-red-100/40 opacity-60 blur-2xl" />
+                  <div className="absolute top-8 right-2 w-[260px] h-[180px] bg-red-200/30 rounded-md transform rotate-6" />
 
                   <svg className="relative z-10 w-full h-full max-w-[440px]" viewBox="0 0 500 420" fill="none">
                     <defs>
@@ -1246,11 +1566,11 @@ export default function CABQPVerification() {
                     {/* Middle Document Sheet */}
                     <g transform="rotate(3 250 210)" filter="url(#softCardShadow)">
                       <rect x="150" y="80" width="230" height="290" rx="10" fill="#FFFFFF" stroke="#CBD5E1" strokeWidth="1.5" />
-                      <rect x="175" y="105" width="100" height="12" rx="4" fill="#0B5CFF" opacity="0.15" />
+                      <rect x="175" y="105" width="100" height="12" rx="4" fill="#c8102e" opacity="0.15" />
                       <rect x="175" y="130" width="180" height="7" rx="2" fill="#E2E8F0" />
                       <rect x="175" y="146" width="160" height="7" rx="2" fill="#F1F5F9" />
-                      <circle cx="340" cy="115" r="14" stroke="#0B5CFF" strokeWidth="1.2" strokeOpacity="0.3" strokeDasharray="3 3" />
-                      <path d="M 334 115 L 338 119 L 347 110" stroke="#0B5CFF" strokeWidth="1.5" strokeOpacity="0.6" />
+                      <circle cx="340" cy="115" r="14" stroke="#c8102e" strokeWidth="1.2" strokeOpacity="0.3" strokeDasharray="3 3" />
+                      <path d="M 334 115 L 338 119 L 347 110" stroke="#c8102e" strokeWidth="1.5" strokeOpacity="0.6" />
                     </g>
 
                     {/* Front Verification Card */}
@@ -1258,7 +1578,7 @@ export default function CABQPVerification() {
                       <rect x="110" y="110" width="260" height="250" rx="10" fill="#FFFFFF" stroke="#94A3B8" strokeWidth="1.5" />
                       <rect x="110" y="110" width="260" height="42" rx="10" fill="#F8FAFC" />
                       <line x1="110" y1="152" x2="370" y2="152" stroke="#E2E8F0" strokeWidth="1" />
-                      <rect x="126" y="122" width="18" height="18" rx="4" fill="#0B5CFF" />
+                      <rect x="126" y="122" width="18" height="18" rx="4" fill="#c8102e" />
                       <path d="M 132 131 L 134.5 133.5 L 140 128" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                       <text x="152" y="136" fill="#0F172A" fontSize="11" fontWeight="bold">HỒ SƠ ĐỐI CHIẾU NGHIỆP VỤ</text>
                       <rect x="315" y="123" width="42" height="16" rx="8" fill="#ECFDF3" stroke="#BFE8CD" strokeWidth="1" />
@@ -1271,7 +1591,7 @@ export default function CABQPVerification() {
                         <rect x="0" y="20" width="45" height="6" rx="2" fill="#94A3B8" opacity="0.6" />
                         <rect x="80" y="20" width="80" height="6" rx="2" fill="#1E293B" opacity="0.8" />
                         <rect x="0" y="40" width="55" height="6" rx="2" fill="#94A3B8" opacity="0.6" />
-                        <rect x="80" y="40" width="140" height="6" rx="2" fill="#0B5CFF" opacity="0.9" />
+                        <rect x="80" y="40" width="140" height="6" rx="2" fill="#c8102e" opacity="0.9" />
                         <rect x="0" y="70" width="228" height="34" rx="6" fill="#F0FDF4" stroke="#DCFCE7" strokeWidth="1" />
                         <circle cx="18" cy="87" r="6" fill="#16A34A" />
                         <path d="M 15 87 L 17 89 L 21 85" stroke="#FFFFFF" strokeWidth="1.2" />
@@ -1281,14 +1601,14 @@ export default function CABQPVerification() {
 
                     {/* Magnifying Glass */}
                     <g filter="url(#softCardShadow)">
-                      <circle cx="330" cy="270" r="52" fill="none" stroke="#0B5CFF" strokeWidth="6" />
-                      <circle cx="330" cy="270" r="46" fill="#0B5CFF" fillOpacity="0.05" stroke="#E2E8F0" strokeWidth="1" />
+                      <circle cx="330" cy="270" r="52" fill="none" stroke="#c8102e" strokeWidth="6" />
+                      <circle cx="330" cy="270" r="46" fill="#c8102e" fillOpacity="0.05" stroke="#E2E8F0" strokeWidth="1" />
                       <path d="M 295 250 A 44 44 0 0 1 345 230" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" opacity="0.8" />
                       <g transform="translate(310, 252)">
-                        <rect x="0" y="0" width="40" height="36" rx="6" fill="#FFFFFF" stroke="#0B5CFF" strokeWidth="1.5" />
+                        <rect x="0" y="0" width="40" height="36" rx="6" fill="#FFFFFF" stroke="#c8102e" strokeWidth="1.5" />
                         <path d="M 10 16 L 17 23 L 30 10" stroke="#16A34A" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
                       </g>
-                      <line x1="370" y1="310" x2="435" y2="375" stroke="#084BD4" strokeWidth="12" strokeLinecap="round" />
+                      <line x1="370" y1="310" x2="435" y2="375" stroke="#9e0b22" strokeWidth="12" strokeLinecap="round" />
                       <line x1="373" y1="313" x2="432" y2="372" stroke="#1E293B" strokeWidth="6" strokeLinecap="round" />
                     </g>
                   </svg>
@@ -1311,10 +1631,10 @@ export default function CABQPVerification() {
               <button
                 type="button"
                 onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
-                className="w-full py-2 px-3 rounded-lg bg-white border border-slate-200 text-slate-700 font-semibold text-[13px] flex items-center justify-between shadow-xs cursor-pointer"
+                className="w-full py-2 px-3 rounded-md bg-white border border-slate-200 text-slate-700 font-semibold text-[13px] flex items-center justify-between shadow-xs cursor-pointer"
               >
                 <div className="flex items-center gap-2">
-                  <Edit3 className="w-3.5 h-3.5 text-blue-600" />
+                  <Edit3 className="w-3.5 h-3.5 text-red-600" />
                   <span>{isMobileSidebarOpen ? 'Thu gọn biểu mẫu tra cứu' : 'Chỉnh sửa thông tin tra cứu'}</span>
                 </div>
                 <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isMobileSidebarOpen ? 'rotate-180' : ''}`} />
@@ -1322,11 +1642,11 @@ export default function CABQPVerification() {
             </div>
 
             {/* Left Search Sidebar */}
-            <aside className={`w-full lg:w-[350px] xl:w-[370px] flex-shrink-0 bg-white rounded-xl border border-slate-200 shadow-xs p-3.5 flex flex-col min-h-0 ${
+            <aside className={`w-full lg:w-[350px] xl:w-[370px] flex-shrink-0 bg-white rounded-md border border-slate-200 shadow-xs p-3.5 flex flex-col min-h-0 ${
               isMobileSidebarOpen ? 'flex max-h-[500px] lg:max-h-none overflow-y-auto lg:overflow-hidden lg:h-full' : 'hidden lg:flex lg:h-full lg:overflow-hidden'
             }`}>
               <div className="flex-shrink-0 flex items-start gap-2 mb-2 pb-2 border-b border-slate-200">
-                <div className="w-1 h-4 bg-blue-600 rounded-full mt-0.5 flex-shrink-0" />
+                <div className="w-1 h-4 bg-red-600 rounded-full mt-0.5 flex-shrink-0" />
                 <div>
                   <h3 className="text-[14px] font-bold text-slate-900">Tra cứu thông tin</h3>
                   <p className="text-[11px] text-slate-500 leading-tight">
@@ -1336,13 +1656,13 @@ export default function CABQPVerification() {
               </div>
 
               {/* Segmented Control */}
-              <div className="flex-shrink-0 flex items-center p-0.5 bg-slate-100 rounded-lg mb-2.5 border border-slate-200/60">
+              <div className="flex-shrink-0 flex items-center p-0.5 bg-slate-100 rounded-md mb-2.5 border border-slate-200/60">
                 <button
                   type="button"
                   onClick={() => setSidebarTab('manual')}
                   className={`flex-1 py-1 px-2.5 rounded text-[12px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                     sidebarTab === 'manual'
-                      ? 'bg-white text-blue-600 shadow-xs border border-slate-200'
+                      ? 'bg-white text-red-600 shadow-xs border border-slate-200'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -1354,7 +1674,7 @@ export default function CABQPVerification() {
                   onClick={() => setSidebarTab('upload')}
                   className={`flex-1 py-1 px-2.5 rounded text-[12px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                     sidebarTab === 'upload'
-                      ? 'bg-white text-blue-600 shadow-xs border border-slate-200'
+                      ? 'bg-white text-red-600 shadow-xs border border-slate-200'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -1367,6 +1687,34 @@ export default function CABQPVerification() {
 
               {sidebarTab === 'manual' ? (
                 <form onSubmit={handleSearch} className="space-y-3">
+                  {apiError && (
+                    <div className="rounded-md bg-red-50 px-3 py-2.5 text-xs leading-relaxed text-red-700">
+                      {String(apiError)}
+                    </div>
+                  )}
+                  <div>
+                    <label className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
+                      Thông tin cần tra cứu
+                    </label>
+                    <textarea
+                      name="queryText"
+                      rows={8}
+                      value={formValues.queryText}
+                      onChange={handleInputChange}
+                      placeholder="Nhập tên, mã cá nhân, đơn vị, chức vụ hoặc nội dung mô tả..."
+                      className={`w-full min-h-[190px] resize-y rounded-md border bg-white p-3 text-[13.5px] leading-6 text-slate-900 outline-none transition-all ${
+                        errors.queryText
+                          ? 'border-red-400 focus:ring-2 focus:ring-red-100'
+                          : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100'
+                      }`}
+                    />
+                    {errors.queryText && <p className="mt-1 text-[11.5px] font-medium text-red-500">{errors.queryText}</p>}
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                      Hệ thống tự trích xuất các trường cần thiết từ nội dung này.
+                    </p>
+                  </div>
+
+                  <div className="hidden">
                   <div>
                     <label className="block text-[12.5px] font-semibold text-slate-900 mb-1">
                       Họ và tên <span className="text-red-500">*</span>
@@ -1377,7 +1725,7 @@ export default function CABQPVerification() {
                       value={formValues.fullName}
                       onChange={handleInputChange}
                       placeholder="Nhập họ và tên"
-                      className="w-full h-10 px-3 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13.5px] bg-white text-slate-900 outline-none"
+                      className="w-full h-10 px-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13.5px] bg-white text-slate-900 outline-none"
                     />
                   </div>
 
@@ -1389,12 +1737,12 @@ export default function CABQPVerification() {
                         name="birthYear"
                         value={formValues.birthYear}
                         onChange={handleInputChange}
-                        placeholder="Ví dụ: 1985"
+                        placeholder="Năm sinh..."
                         maxLength={5}
-                        className={`w-full h-10 px-3 rounded-lg border text-[13.5px] bg-white outline-none transition-all ${
+                        className={`w-full h-10 px-3 rounded-md border text-[13.5px] bg-white outline-none transition-all ${
                           errors.birthYear
                             ? 'border-red-500 focus:ring-2 focus:ring-red-100 text-red-600 bg-red-50/20'
-                            : 'border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-slate-900'
+                            : 'border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-slate-900'
                         }`}
                       />
                       {errors.birthYear && (
@@ -1411,8 +1759,8 @@ export default function CABQPVerification() {
                         name="position"
                         value={formValues.position}
                         onChange={handleInputChange}
-                        placeholder="Ví dụ: Cán bộ"
-                        className="w-full h-10 px-3 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13.5px] bg-white text-slate-900 outline-none"
+                        placeholder="Chức vụ..."
+                        className="w-full h-10 px-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13.5px] bg-white text-slate-900 outline-none"
                       />
                     </div>
                   </div>
@@ -1420,21 +1768,24 @@ export default function CABQPVerification() {
                   <div>
                     <label className="block text-[12.5px] font-semibold text-slate-900 mb-1">Đơn vị</label>
                     <div className="relative">
-                      <select
+                      <input
+                        list="sidebar-department-options"
+                        type="text"
                         name="department"
                         value={formValues.department}
                         onChange={handleInputChange}
-                        className="w-full h-10 px-3 pr-7 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13.5px] bg-white text-slate-900 outline-none appearance-none cursor-pointer"
-                      >
-                        <option value="">Chọn đơn vị nghiệp vụ</option>
-                        <option value="Đơn vị X - Cục CSDT">Đơn vị X - Cục CSDT (Bộ Công an)</option>
-                        <option value="Công an quận Hoàng Mai">Công an quận Hoàng Mai (Hà Nội)</option>
-                        <option value="Học viện ANND">Học viện An ninh Nhân dân</option>
-                        <option value="Quân khu 7">Quân khu 7 (Bộ Quốc phòng)</option>
-                        <option value="Bộ Tư lệnh CSCĐ">Bộ Tư lệnh Cảnh sát Cơ động</option>
-                        <option value="Cục Tác chiến">Cục Tác chiến - BQP</option>
-                        <option value="Đơn vị dân sự ngoài ngành">Đơn vị dân sự ngoài ngành</option>
-                      </select>
+                        placeholder="Nhập hoặc chọn đơn vị..."
+                        className="w-full h-10 px-3 pr-7 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13.5px] bg-white text-slate-900 outline-none"
+                      />
+                      <datalist id="sidebar-department-options">
+                        <option value="Đơn vị X - Cục CSDT (Bộ Công an)" />
+                        <option value="Công an quận Hoàng Mai (Hà Nội)" />
+                        <option value="Học viện An ninh Nhân dân" />
+                        <option value="Quân khu 7 (Bộ Quốc phòng)" />
+                        <option value="Bộ Tư lệnh Cảnh sát Cơ động" />
+                        <option value="Cục Tác chiến - BQP" />
+                        <option value="Đơn vị dân sự ngoài ngành" />
+                      </datalist>
                       <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none text-slate-400">
                         <ChevronDown className="w-3.5 h-3.5" />
                       </div>
@@ -1450,8 +1801,8 @@ export default function CABQPVerification() {
                       name="identifier"
                       value={formValues.identifier}
                       onChange={handleInputChange}
-                      placeholder="Ví dụ: CA-8492"
-                      className="w-full h-10 px-3 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13.5px] bg-white text-slate-900 outline-none uppercase"
+                      placeholder="Số hiệu / Mã định danh..."
+                      className="w-full h-10 px-3 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13.5px] bg-white text-slate-900 outline-none uppercase"
                     />
                   </div>
 
@@ -1463,14 +1814,15 @@ export default function CABQPVerification() {
                       onChange={handleInputChange}
                       rows={2}
                       placeholder="Ghi chú hồ sơ hoặc quyết định..."
-                      className="w-full p-2.5 rounded-lg border border-slate-200 hover:border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 text-[13px] bg-white text-slate-900 outline-none resize-none"
+                      className="w-full p-2.5 rounded-md border border-slate-200 hover:border-red-400 focus:border-red-600 focus:ring-2 focus:ring-red-100 text-[13px] bg-white text-slate-900 outline-none resize-none"
                     />
+                  </div>
                   </div>
 
                   <div className="pt-2 flex items-center gap-2">
                     <button
                       type="submit"
-                      className="flex-1 h-10 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[13.5px] flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                      className="flex-1 h-10 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold text-[13.5px] flex items-center justify-center gap-1.5 shadow-sm transition-all"
                     >
                       <Search className="w-4 h-4" />
                       <span>Tra cứu</span>
@@ -1478,7 +1830,7 @@ export default function CABQPVerification() {
                     <button
                       type="button"
                       onClick={handleReset}
-                      className="h-10 px-3.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-[13px] flex items-center justify-center gap-1.5 transition-all"
+                      className="h-10 px-3.5 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-[13px] flex items-center justify-center gap-1.5 transition-all"
                     >
                       <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
                       <span>Xóa</span>
@@ -1492,7 +1844,7 @@ export default function CABQPVerification() {
                     ref={sidebarFileInputRef}
                     type="file"
                     className="hidden"
-                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.json,.csv,.log"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
                         handleProcessFile(e.target.files[0]);
@@ -1502,7 +1854,7 @@ export default function CABQPVerification() {
 
                   {/* Dropzone Container */}
                   <div
-                    onClick={() => !uploadedFile && sidebarFileInputRef.current?.click()}
+                    onClick={() => !uploadedFile && openFilePicker(sidebarFileInputRef)}
                     onDragOver={(e) => {
                       e.preventDefault();
                       setIsDragging(true);
@@ -1515,38 +1867,37 @@ export default function CABQPVerification() {
                         handleProcessFile(e.dataTransfer.files[0]);
                       }
                     }}
-                    className={`border-2 border-dashed rounded-xl p-3.5 text-center transition-all ${
+                    className={`border-2 border-dashed rounded-md p-3.5 text-center transition-all ${
                       isDragging
-                        ? 'border-blue-500 bg-blue-50/60'
+                        ? 'border-red-500 bg-red-50/60'
                         : uploadedFile
                         ? 'border-emerald-300 bg-emerald-50/20'
-                        : 'border-slate-200 hover:border-blue-400 bg-slate-50/50 cursor-pointer'
+                        : 'border-slate-200 hover:border-red-400 bg-slate-50/50 cursor-pointer'
                     }`}
                   >
                     {isExtracting ? (
                       <div className="py-4 flex flex-col items-center justify-center space-y-2">
-                        <div className="w-8 h-8 rounded-full border-2 border-blue-600 border-t-transparent animate-spin flex items-center justify-center">
-                          <Sparkles className="w-4 h-4 text-blue-600" />
+                        <div className="w-8 h-8 rounded-full border-2 border-red-600 border-t-transparent animate-spin flex items-center justify-center">
+                          <Scan className="w-4 h-4 text-red-600" />
                         </div>
-                        <p className="text-[12px] font-bold text-blue-900">Đang nhận diện OCR...</p>
+                        <p className="text-[12px] font-bold text-red-900">Đang đọc nội dung tài liệu...</p>
                       </div>
                     ) : uploadedFile ? (
                       <div className="space-y-2 text-left">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-12 h-12 rounded-lg border border-slate-200 bg-slate-100 flex-shrink-0 flex items-center justify-center overflow-hidden">
-                            {filePreviewUrl ? (
+                          <div className="w-12 h-12 rounded-md border border-slate-200 bg-slate-100 flex-shrink-0 flex items-center justify-center overflow-hidden">
+                            {filePreviewUrl && uploadedFile.type?.startsWith('image/') ? (
                               <img src={filePreviewUrl} alt="Scan" className="w-full h-full object-cover" />
                             ) : (
-                              <FileText className="w-6 h-6 text-blue-500" />
+                              <FileText className="w-6 h-6 text-red-500" />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-[12.5px] font-bold text-slate-900 truncate">{uploadedFile.name}</p>
                             <p className="text-[11px] text-slate-500">{(uploadedFile.size / 1024).toFixed(1)} KB</p>
-                            <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 mt-0.5">
-                              <CheckCircle2 className="w-3 h-3" />
-                              <span>{extractedData?.confidence || '99%'} tin cậy</span>
-                            </span>
+                            <div className="mt-0.5">
+                              <UploadStatusBadge data={extractedData} compact />
+                            </div>
                           </div>
                         </div>
 
@@ -1563,18 +1914,18 @@ export default function CABQPVerification() {
                         </div>
 
                         {/* Action buttons */}
-                        <div className="flex items-center gap-1.5 pt-1">
+                        <div className="grid grid-cols-3 gap-1.5 pt-1">
                           <button
                             type="button"
                             onClick={() => setIsOcrModalOpen(true)}
-                            className="flex-1 py-1 px-2 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-[11px] flex items-center justify-center gap-1"
+                            className="flex-1 py-1 px-2 rounded bg-red-50 hover:bg-red-100 text-red-700 font-semibold text-[11px] flex items-center justify-center gap-1"
                           >
                             <Eye className="w-3 h-3" />
-                            <span>Xem OCR</span>
+                            <span>Xem thông tin đã nhận dạng</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => sidebarFileInputRef.current?.click()}
+                            onClick={() => openFilePicker(sidebarFileInputRef)}
                             className="py-1 px-2 rounded border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium text-[11px]"
                           >
                             Đổi tệp
@@ -1590,10 +1941,10 @@ export default function CABQPVerification() {
                       </div>
                     ) : (
                       <div className="py-2">
-                        <UploadCloud className="w-7 h-7 text-blue-600 mx-auto mb-1" />
+                        <UploadCloud className="w-7 h-7 text-red-600 mx-auto mb-1" />
                         <p className="text-[12.5px] font-semibold text-slate-900">Tải ảnh thẻ / Quyết định</p>
                         <p className="text-[11px] text-slate-500 mt-0.5">JPG, PNG, PDF, Word &lt; 25MB</p>
-                        <span className="mt-2 inline-flex items-center gap-1 text-[11px] text-blue-600 font-semibold hover:underline">
+                        <span className="mt-2 inline-flex items-center gap-1 text-[11px] text-red-600 font-semibold hover:underline">
                           <FolderOpen className="w-3 h-3" />
                           <span>Chọn tệp tải lên</span>
                         </span>
@@ -1601,34 +1952,12 @@ export default function CABQPVerification() {
                     )}
                   </div>
 
-                  {/* Quick test sample pills */}
-                  <div className="space-y-1 pt-1">
-                    <span className="text-[11px] font-semibold text-slate-500 block">Thử nhanh tài liệu mẫu:</span>
-                    <div className="flex flex-col gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleLoadSample('bca')}
-                        className="text-left px-2 py-1.5 rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 text-[11.5px] text-slate-700 font-medium truncate flex items-center justify-between"
-                      >
-                        <span>📄 Thẻ CAND (Nguyễn Văn A)</span>
-                        <span className="text-[10px] text-blue-600 font-bold">BCA</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLoadSample('bqp')}
-                        className="text-left px-2 py-1.5 rounded-lg border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40 text-[11.5px] text-slate-700 font-medium truncate flex items-center justify-between"
-                      >
-                        <span>🎖️ QĐ BQP (Phạm Quốc Dũng)</span>
-                        <span className="text-[10px] text-emerald-600 font-bold">BQP</span>
-                      </button>
-                    </div>
-                  </div>
 
                   {/* Main Action Button */}
                   <button
                     type="button"
                     onClick={handleSearch}
-                    className="w-full h-10 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[13px] flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                    className="w-full h-10 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold text-[13px] flex items-center justify-center gap-1.5 shadow-sm transition-all"
                   >
                     <Scan className="w-4 h-4" />
                     <span>Trích xuất &amp; Tra cứu</span>
@@ -1646,7 +1975,7 @@ export default function CABQPVerification() {
                   <button
                     type="button"
                     onClick={() => setAppState('initial')}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-[12.5px] font-semibold text-slate-700 transition-colors group cursor-pointer"
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 hover:bg-slate-50 text-[12.5px] font-semibold text-slate-700 transition-colors group cursor-pointer"
                     title="Quay lại biểu mẫu tra cứu"
                   >
                     <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform text-slate-500" />
@@ -1656,7 +1985,7 @@ export default function CABQPVerification() {
                   <div className="h-3.5 w-[1px] bg-slate-200" />
 
                   <span className="font-mono text-slate-900 font-bold text-[12.5px]">
-                    {currentCaseData?.case_code || '#HS-2026-8492'}
+                    {currentCaseData?.case_code || '—'}
                   </span>
                   <span className="hidden sm:inline text-slate-300">|</span>
                   <span className="hidden sm:inline text-[11.5px] text-slate-500">
@@ -1665,48 +1994,22 @@ export default function CABQPVerification() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  {appState !== 'loading' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenOriginalDossier()}
-                        className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[12px] font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
-                        title="Xem trích lục hồ sơ gốc"
-                      >
-                        <FileText className="w-3.5 h-3.5 text-slate-500" />
-                        <span className="hidden xs:inline sm:inline">Xem hồ sơ gốc</span>
-                        <span className="xs:hidden sm:hidden">Hồ sơ</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDetailedCompare()}
-                        className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                        title="Xem bảng đối chiếu chi tiết các trường dữ liệu"
-                      >
-                        <Layers className="w-3.5 h-3.5 text-blue-600" />
-                        <span className="hidden xs:inline sm:inline">Đối chiếu chi tiết</span>
-                        <span className="xs:hidden sm:hidden">Đối chiếu</span>
-                      </button>
-                    </>
-                  )}
-
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[11.5px] border font-bold flex items-center gap-1.5 ${
                       appState === 'loading'
-                        ? 'bg-blue-50 text-blue-600 border-blue-200'
+                        ? 'bg-red-50 text-red-600 border-red-200'
                         : appState === 'verified'
                         ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                         : appState === 'needs-verification'
-                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                        ? 'bg-[#FDF0BE] text-amber-800 border-amber-200'
                         : 'bg-slate-100 text-slate-600 border-slate-200'
                     }`}
                   >
-                    {appState === 'loading' && <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping"></span>}
+                    {appState === 'loading' && <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping"></span>}
                     {appState === 'loading'
                       ? 'Đang xử lý'
                       : appState === 'verified'
-                      ? 'Đã xác định'
+                      ? 'Đã xác định đơn vị'
                       : appState === 'needs-verification'
                       ? 'Cần xác minh'
                       : 'Không tìm thấy'}
@@ -1718,22 +2021,22 @@ export default function CABQPVerification() {
               <div className="flex-1 min-h-0 overflow-y-auto pr-1">
                 {/* STATE 2: LOADING */}
                 {appState === 'loading' && (
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 relative overflow-hidden flex-1 flex flex-col justify-between">
+                  <div className="bg-white rounded-md border border-slate-200 shadow-sm p-6 sm:p-8 relative overflow-hidden flex-1 flex flex-col justify-between">
                     <div className="text-center mb-8 max-w-[620px] mx-auto">
                       {/* Dynamic Alert Status for Processing */}
-                      <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-xl bg-blue-50/90 border border-blue-200 text-blue-800 shadow-xs mb-3">
-                        <Loader2 className="w-4 h-4 text-blue-600 animate-spin flex-shrink-0" />
-                        <span className="text-[12px] font-bold uppercase tracking-wider text-blue-600">
+                      <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-md bg-red-50/90 border border-red-200 text-red-800 shadow-xs mb-3">
+                        <Loader2 className="w-4 h-4 text-red-600 animate-spin flex-shrink-0" />
+                        <span className="text-[12px] font-bold uppercase tracking-wider text-red-600">
                           Đang xử lý:
                         </span>
                         <span className="text-[13px] font-semibold text-slate-900 min-w-[280px] text-left">
                           {loadingProgress < 33
                             ? 'Tiếp nhận và kiểm tra thông tin hồ sơ...'
                             : loadingProgress < 66
-                            ? 'Trích xuất thực thể nhân sự qua OCR...'
+                            ? 'Đang nhận dạng thông tin nhân sự...'
                             : 'Đối soát chéo với Danh mục Đơn vị Gốc...'}
                         </span>
-                        <span className="text-[11.5px] font-bold text-blue-700 bg-white border border-blue-200 px-2 py-0.5 rounded-md font-mono shadow-2xs">
+                        <span className="text-[11.5px] font-bold text-red-700 bg-white border border-red-200 px-2 py-0.5 rounded-md font-mono shadow-2xs">
                           {Math.round(loadingProgress)}%
                         </span>
                       </div>
@@ -1750,7 +2053,7 @@ export default function CABQPVerification() {
                         {/* Background track running exactly from center of step 1 to center of step 4 */}
                         <div className="absolute left-[40px] right-[40px] sm:left-[48px] sm:right-[48px] top-4 sm:top-5 h-[3px] bg-slate-200 rounded-full z-0 overflow-hidden">
                           <div
-                            className="h-full bg-blue-600 rounded-full transition-[width] duration-75 ease-linear relative overflow-hidden"
+                            className="h-full bg-red-600 rounded-full transition-[width] duration-75 ease-linear relative overflow-hidden"
                             style={{ width: `${loadingProgress}%` }}
                           >
                             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-shimmer" />
@@ -1759,7 +2062,7 @@ export default function CABQPVerification() {
 
                         {/* Step 1: Tiếp nhận */}
                         <div className="relative z-10 flex flex-col items-center w-20 sm:w-24 text-center">
-                          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[12px] sm:text-[14px] shadow-sm ring-4 ring-white">
+                          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-red-600 text-white flex items-center justify-center font-bold text-[12px] sm:text-[14px] shadow-sm ring-4 ring-white">
                             <Check className="w-4 h-4 sm:w-5 sm:h-5" />
                           </div>
                           <span className="text-[11px] sm:text-[13px] font-bold text-slate-900 mt-1.5 sm:mt-2">Tiếp nhận</span>
@@ -1770,15 +2073,15 @@ export default function CABQPVerification() {
                         <div className="relative z-10 flex flex-col items-center w-20 sm:w-24 text-center">
                           <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-bold text-[12px] sm:text-[14px] ring-4 ring-white transition-all duration-300 ${
                             loadingProgress >= 66
-                              ? 'bg-blue-600 text-white shadow-sm'
+                              ? 'bg-red-600 text-white shadow-sm'
                               : loadingProgress >= 33
-                              ? 'bg-white border-2 border-blue-600 text-blue-600 shadow-md ring-offset-2 ring-offset-blue-50'
+                              ? 'bg-white border-2 border-red-600 text-red-600 shadow-md ring-offset-2 ring-offset-red-50'
                               : 'bg-white border border-slate-300 text-slate-400'
                           }`}>
                             {loadingProgress >= 66 ? <Check className="w-4 h-4 sm:w-5 sm:h-5" /> : '2'}
                           </div>
                           <span className={`text-[11px] sm:text-[13px] mt-1.5 sm:mt-2 transition-colors ${
-                            loadingProgress >= 33 ? 'font-bold text-blue-600' : 'font-medium text-slate-500'
+                            loadingProgress >= 33 ? 'font-bold text-red-600' : 'font-medium text-slate-500'
                           }`}>
                             Trích xuất
                           </span>
@@ -1786,7 +2089,7 @@ export default function CABQPVerification() {
                             loadingProgress >= 66
                               ? 'text-emerald-600 font-semibold'
                               : loadingProgress >= 33
-                              ? 'text-blue-600 font-semibold animate-pulse'
+                              ? 'text-red-600 font-semibold animate-pulse'
                               : 'text-slate-400'
                           }`}>
                             {loadingProgress >= 66 ? 'Hoàn tất' : loadingProgress >= 33 ? 'Đang xử lý' : 'Chờ xử lý'}
@@ -1797,18 +2100,18 @@ export default function CABQPVerification() {
                         <div className="relative z-10 flex flex-col items-center w-20 sm:w-24 text-center">
                           <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-bold text-[12px] sm:text-[14px] ring-4 ring-white transition-all duration-300 ${
                             loadingProgress >= 66
-                              ? 'bg-white border-2 border-blue-600 text-blue-600 shadow-md ring-offset-2 ring-offset-blue-50'
+                              ? 'bg-white border-2 border-red-600 text-red-600 shadow-md ring-offset-2 ring-offset-red-50'
                               : 'bg-white border border-slate-300 text-slate-400 font-medium'
                           }`}>
                             3
                           </div>
                           <span className={`text-[11px] sm:text-[13px] mt-1.5 sm:mt-2 transition-colors ${
-                            loadingProgress >= 66 ? 'font-bold text-blue-600' : 'font-medium text-slate-500'
+                            loadingProgress >= 66 ? 'font-bold text-red-600' : 'font-medium text-slate-500'
                           }`}>
                             Đối chiếu
                           </span>
                           <span className={`text-[10px] sm:text-[11.5px] hidden xs:block sm:block transition-colors ${
-                            loadingProgress >= 66 ? 'text-blue-600 font-semibold animate-pulse' : 'text-slate-400'
+                            loadingProgress >= 66 ? 'text-red-600 font-semibold animate-pulse' : 'text-slate-400'
                           }`}>
                             {loadingProgress >= 66 ? 'Đang xử lý' : 'Chờ xử lý'}
                           </span>
@@ -1825,12 +2128,12 @@ export default function CABQPVerification() {
                       </div>
                     </div>
 
-                    <div className="mt-6 p-4 rounded-lg bg-blue-50/70 border border-blue-200/80 flex items-start gap-3">
-                      <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                    <div className="mt-6 p-4 rounded-md bg-red-50/70 border border-red-200/80 flex items-start gap-3">
+                      <Info className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
                       <div>
                         <h5 className="text-[13.5px] font-bold text-slate-900">Lưu ý nghiệp vụ</h5>
                         <p className="text-[12.5px] text-slate-600 mt-0.5">
-                          Hệ thống tuân thủ nguyên tắc không ép nhãn. Trường hợp thiếu dữ kiện sẽ tự động kích hoạt luồng Thẩm định chuyên gia (Human Review).
+                          Hệ thống không tự kết luận khi thiếu căn cứ. Các trường hợp này sẽ được chuyển cho cán bộ thẩm định.
                         </p>
                       </div>
                     </div>
@@ -1847,26 +2150,46 @@ export default function CABQPVerification() {
                       ? 'BQP'
                       : 'BCA');
                   const isBqp = currentOrg === 'BQP';
+                  const eligibility = Array.isArray(currentCaseData?.eligibility) ? currentCaseData.eligibility : [];
+                  const subjectGroup = currentCaseData?.subject_group || null;
+                  const subjectGroupMethod = currentCaseData?.subject_group_method || null;
+                  const subjectGroupConfidence = currentCaseData?.subject_group_confidence;
+                  const taxonomyVersion = currentCaseData?.taxonomy_version || null;
+                  const salaryStatus = currentCaseData?.salary_status || 'Không đủ dữ liệu';
+                  const hasPolicyConclusion = eligibility.some((item) =>
+                    ['ELIGIBLE', 'NOT_ELIGIBLE', 'NOT_APPLICABLE'].includes(item?.status)
+                  );
+                  const canonicalUnit = currentCaseData?.current_unit || formValues.department || 'Chưa xác định đơn vị';
 
                   return (
                     <div className="space-y-5">
+                      <CorrectionNotice fields={correctedFields} />
                       {/* Success Banner */}
-                      <div className="relative overflow-hidden rounded-xl bg-emerald-50 border border-emerald-200 p-6 shadow-sm">
-                        <div className="relative z-10 flex items-start gap-4">
-                          <div className="w-12 h-12 rounded-full bg-white text-emerald-600 flex items-center justify-center border border-emerald-200 shadow-sm flex-shrink-0">
-                            <ShieldCheck className="w-7 h-7" />
+                      <div className="relative overflow-hidden rounded-md bg-white border border-slate-200 shadow-sm">
+                        <div className="p-5 sm:p-6 flex items-start gap-4">
+                          <div className={`w-14 h-14 rounded-md flex items-center justify-center flex-shrink-0 ${
+                            isBqp ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                          }`}>
+                            <ShieldCheck className="w-8 h-8" />
                           </div>
-                          <div>
-                            <span className="inline-block px-2 py-0.5 rounded text-[11.5px] font-bold uppercase tracking-wider bg-white/80 border border-emerald-200 text-emerald-800 mb-1">
-                              KẾT QUẢ ĐỐI CHIẾU CHUẨN
-                            </span>
-                            <h2 className="text-[22px] sm:text-[24px] md:text-[26px] font-bold text-emerald-800 leading-tight">
-                              {isBqp ? 'Thuộc phạm vi quản lý Bộ Quốc phòng' : 'Thuộc phạm vi quản lý Bộ Công an'}
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
+                                isBqp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                              }`}>
+                                <CheckCircle2 className="w-3 h-3" />
+                                Kết quả đối chiếu chuẩn
+                              </span>
+                            </div>
+                            <h2 className="text-[21px] sm:text-[24px] font-bold text-slate-900 leading-tight">
+                              Đơn vị thuộc phạm vi quản lý{' '}
+                              <span className={isBqp ? 'text-emerald-700' : 'text-red-700'}>
+                                {isBqp ? 'Bộ Quốc phòng' : 'Bộ Công an'}
+                              </span>
                             </h2>
-                            <p className="text-[14px] text-slate-700 mt-1">
-                              {isBqp
-                                ? 'Trùng khớp thông tin với Danh mục Đơn vị Gốc (Bộ Quốc phòng). Các trường dữ liệu định danh và chính sách bảo hiểm, tiền lương đã được thẩm định tự động theo Nghị định 157/2025/NĐ-CP và Thông tư Bộ Quốc phòng.'
-                                : 'Trùng khớp thông tin với Danh mục Đơn vị Gốc (Bộ Công an). Các trường dữ liệu định danh và chính sách bảo hiểm, tiền lương đã được thẩm định tự động theo Nghị định 157/2025/NĐ-CP và Thông tư 88/2025/TT-BCA.'}
+                            <p className="text-[13.5px] text-slate-600 mt-1.5 leading-relaxed">
+                              Đã đối chiếu và xác định đơn vị <strong className="text-slate-800">{canonicalUnit}</strong> thuộc {isBqp ? 'Bộ Quốc phòng' : 'Bộ Công an'}.
+                              {!subjectGroup && ' Chưa đủ dữ liệu để xác định nhóm đối tượng và chế độ, quyền lợi.'}
                             </p>
                           </div>
                         </div>
@@ -1875,161 +2198,211 @@ export default function CABQPVerification() {
                       {/* 2-Column Info Grid */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                         {/* Left: Thông tin định danh */}
-                        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-                          <div className="pb-3 mb-3 border-b border-slate-100">
-                            <h3 className="text-[16px] font-bold text-slate-900">Thông tin định danh</h3>
+                        <div className="bg-white rounded-md border border-slate-200 shadow-sm overflow-hidden">
+                          <div className="px-5 py-4 flex items-center gap-2.5 border-b border-slate-100 bg-slate-50/60">
+                            <User className="w-4 h-4 text-slate-400" />
+                            <h3 className="text-[15px] font-bold text-slate-900">Thông tin định danh</h3>
                           </div>
 
-                          <div className="divide-y divide-slate-100 text-[13.5px]">
-                            <div className="py-2.5 flex justify-between items-center">
-                              <span className="text-slate-500 font-medium">Họ và tên</span>
-                              <span className="text-slate-900 font-bold text-[14.5px]">
-                                {formValues.fullName || (isBqp ? 'Phạm Quốc Dũng' : 'Nguyễn Văn A')}
-                              </span>
-                            </div>
+                          <div className="px-5 pt-4 pb-1">
+                            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Họ và tên</span>
+                            <p className="text-[19px] font-bold text-slate-900 leading-tight mt-0.5">
+                              {formValues.fullName || currentCaseData?.fullName || 'Chưa cung cấp'}
+                            </p>
+                          </div>
+
+                          <div className="px-5 pb-4 divide-y divide-slate-100 text-[13.5px] mt-2">
                             <div className="py-2.5 flex justify-between items-center">
                               <span className="text-slate-500 font-medium">Năm sinh</span>
                               <span className="text-slate-900 font-semibold">
                                 {formValues.birthYear
                                   ? `${formValues.birthYear} (${new Date().getFullYear() - parseInt(formValues.birthYear, 10)} tuổi)`
-                                  : '1985 (41 tuổi)'}
+                                  : 'Chưa rõ năm sinh'}
                               </span>
                             </div>
                             <div className="py-2.5 flex justify-between items-center">
                               <span className="text-slate-500 font-medium">Giới tính</span>
-                              <span className="text-slate-900 font-semibold">Nam</span>
+                              <span className="text-slate-500 font-medium">Chưa có dữ liệu</span>
                             </div>
-                            <div className="py-2.5 flex justify-between items-center">
-                              <span className="text-slate-500 font-medium">Đơn vị</span>
-                              <span className="text-slate-900 font-semibold text-right">
-                                {formValues.department || (isBqp ? 'Quân khu 7' : 'Đơn vị X - Cục CSDT')}
+                            <div className="py-2.5 flex justify-between items-center gap-4">
+                              <span className="text-slate-500 font-medium flex-shrink-0">Đơn vị</span>
+                              <span className="text-slate-900 font-semibold text-right truncate">
+                                {canonicalUnit}
                               </span>
                             </div>
                             <div className="py-2.5 flex justify-between items-center">
                               <span className="text-slate-500 font-medium">Chức vụ</span>
                               <span className="text-slate-900 font-semibold">
-                                {formValues.position || (isBqp ? 'Sĩ quan tham mưu' : 'Cán bộ điều tra')}
+                                {formValues.position || 'Chưa có dữ liệu'}
                               </span>
                             </div>
                             <div className="py-2.5 flex justify-between items-center">
                               <span className="text-slate-500 font-medium">Mã định danh</span>
-                              <span className="font-mono text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                                {formValues.identifier || (isBqp ? 'BQP-7193' : 'CA-8492')}
+                              <span className="font-mono text-red-700 font-bold bg-red-50 px-2 py-0.5 rounded border border-red-200 text-[12.5px]">
+                                {formValues.identifier || '—'}
                               </span>
                             </div>
                           </div>
                         </div>
 
-                        {/* Right: Chế độ, quyền lợi */}
-                        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-                          <div className="pb-3 mb-3 border-b border-slate-100">
-                            <h3 className="text-[16px] font-bold text-slate-900">Chế độ, quyền lợi</h3>
+                        {/* Right: Nhóm đối tượng và kết quả policy */}
+                        <div className="bg-white rounded-md border border-slate-200 shadow-sm overflow-hidden">
+                          <div className="px-5 py-4 flex items-center gap-2.5 border-b border-slate-100 bg-slate-50/60">
+                            <Award className="w-4 h-4 text-slate-400" />
+                            <h3 className="text-[15px] font-bold text-slate-900">Nhóm đối tượng &amp; chế độ</h3>
                           </div>
 
-                          <div className="divide-y divide-slate-100 text-[13.5px]">
-                            <div className="py-2.5 flex justify-between items-center">
-                              <span className="text-slate-500 font-medium">Thuộc diện</span>
-                              <span className="px-2.5 py-0.5 rounded-full text-[12px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                Hưởng lương
+                          <div className="px-5 pt-4 pb-1 flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-bold border ${
+                              subjectGroup
+                                ? 'bg-red-50 text-red-800 border-red-200'
+                                : 'bg-[#FDF0BE] text-amber-800 border-amber-200'
+                            }`}>
+                              {subjectGroup ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
+                              {subjectGroup || 'Chưa xác định nhóm đối tượng'}
+                            </span>
+                            {typeof subjectGroupConfidence === 'number' && (
+                              <span className="text-[11px] font-semibold text-slate-500">
+                                Độ tin cậy: {Math.round(subjectGroupConfidence * 100)}%
                               </span>
+                            )}
+                          </div>
+                          {(subjectGroupMethod || taxonomyVersion) && (
+                            <div className="px-5 pb-1 text-[11.5px] text-slate-500 leading-snug">
+                              {subjectGroupMethod && (SUBJECT_GROUP_METHOD_LABELS[subjectGroupMethod] || subjectGroupMethod)}
+                              {taxonomyVersion && <span className="ml-1 text-slate-400">· Bộ tiêu chí {taxonomyVersion}</span>}
+                            </div>
+                          )}
+
+                          <div className="px-5 pb-4 divide-y divide-slate-100 text-[13.5px] mt-2">
+                            <div className="py-2.5 flex justify-between items-center">
+                              <span className="text-slate-500 font-medium">Tình trạng lương</span>
+                              <span className={salaryStatus === 'Có' ? 'text-emerald-700 font-semibold' : 'text-slate-700 font-semibold'}>{salaryStatus}</span>
                             </div>
                             <div className="py-2.5 flex justify-between items-center">
-                              <span className="text-slate-500 font-medium">Hình thức chi trả</span>
-                              <span className="text-slate-900 font-semibold">Ngân sách nhà nước</span>
+                              <span className="text-slate-500 font-medium">Đánh giá chính sách</span>
+                              <span className="text-slate-900 font-semibold">{hasPolicyConclusion ? 'Đã có kết quả' : 'Chưa đủ dữ liệu'}</span>
                             </div>
-                            <div className="py-2.5 flex justify-between items-center">
-                              <span className="text-slate-500 font-medium">Cơ quan chi trả</span>
-                              <span className="text-slate-900 font-semibold">{isBqp ? 'Bộ Quốc phòng' : 'Bộ Công an'}</span>
-                            </div>
-                            <div className="py-2.5 flex justify-between items-start gap-4">
-                              <span className="text-slate-500 font-medium flex-shrink-0">Ghi chú</span>
-                              <span className="text-slate-900 font-medium text-right text-[13px] leading-snug">
-                                {isBqp
-                                  ? 'Sĩ quan / Quân nhân chuyên nghiệp thuộc Quân đội nhân dân Việt Nam. Đủ điều kiện hưởng các chế độ an sinh quốc phòng hiện hành.'
-                                  : 'Cán bộ, công chức trong lực lượng Công an nhân dân. Đủ điều kiện hưởng các chế độ an sinh ngành hiện hành.'}
-                              </span>
+                            <div className="py-2.5">
+                              <span className="text-slate-500 font-medium block mb-1">Kết luận</span>
+                              {eligibility.length > 0 ? (
+                                <div className="space-y-1.5">
+                                  {eligibility.map((item, index) => (
+                                    <div key={`${item.policy_id || 'policy'}-${index}`} className="text-[13px] leading-snug">
+                                      <span className="font-semibold text-slate-800">{item.policy_id}</span>
+                                      {item.policy_version && <span className="font-mono text-[10.5px] text-slate-400 ml-1">v{item.policy_version}</span>}
+                                      <span className="text-slate-600">: {item.reason || POLICY_STATUS_LABELS[item.status] || 'Chưa xác định'}</span>
+                                      {item.evidence?.as_of_date && (
+                                        <span className="text-slate-400 text-[11px] ml-1">(tính đến {item.evidence.as_of_date})</span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-slate-600 font-medium text-[13px] leading-snug block">
+                                  Chưa có căn cứ để kết luận người này thuộc nhóm nào, hưởng lương hay đủ điều kiện hưởng chế độ. Cần bổ sung dữ liệu nghiệp vụ.
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
                       </div>
 
                       {/* Căn cứ đối chiếu */}
-                      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+                      <div className="bg-white rounded-md border border-slate-200 p-5 shadow-sm">
                         <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
                           <h3 className="text-[16px] font-bold text-slate-900">Căn cứ đối chiếu</h3>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenDetailedCompare()}
-                            className="text-[12px] font-semibold text-blue-600 border border-slate-200 px-3 py-1 rounded-md hover:bg-slate-50 cursor-pointer transition-colors"
-                            title="Xem biên bản đối chiếu chi tiết thực thể"
-                          >
-                            Xem chi tiết đối chiếu
-                          </button>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                          <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-200">
-                            <span className="text-[13px] font-semibold text-emerald-800">✓ Họ tên phù hợp</span>
-                          </div>
-                          <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-200">
-                            <span className="text-[13px] font-semibold text-emerald-800">
-                              {formValues.birthYear ? `✓ Năm sinh: ${formValues.birthYear}` : '✓ Năm sinh phù hợp'}
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-200">
-                            <span className="text-[13px] font-semibold text-emerald-800">
-                              {formValues.department ? `✓ Đơn vị: ${formValues.department}` : `✓ Cơ quan: ${isBqp ? 'BQP' : 'BCA'}`}
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-200">
-                            <span className="text-[13px] font-semibold text-emerald-800">
-                              {formValues.identifier ? `✓ Mã: ${formValues.identifier}` : '✓ Mã định danh khớp'}
-                            </span>
-                          </div>
+                          {[
+                            { icon: User, label: formValues.fullName ? `Họ tên: ${formValues.fullName}` : 'Chưa có họ tên', verified: Boolean(formValues.fullName) },
+                            {
+                              icon: Calendar,
+                              label: formValues.birthYear ? `Năm sinh: ${formValues.birthYear}` : 'Chưa có năm sinh',
+                              verified: Boolean(formValues.birthYear),
+                            },
+                            {
+                              icon: Building2,
+                              label: `Đơn vị: ${canonicalUnit}`,
+                              verified: true,
+                            },
+                            {
+                              icon: Hash,
+                              label: formValues.identifier ? `Mã: ${formValues.identifier}` : 'Chưa có mã định danh',
+                              verified: Boolean(formValues.identifier),
+                            },
+                          ].map(({ icon: Icon, label, verified }, i) => (
+                            <div key={i} className={`p-3 rounded-md border flex items-start gap-2 ${verified ? 'bg-emerald-50/60 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+                              {verified ? <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" /> : <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />}
+                              <div className="min-w-0">
+                                <Icon className={`w-3.5 h-3.5 mb-1 ${verified ? 'text-emerald-500' : 'text-slate-400'}`} />
+                                <p className={`text-[12.5px] font-semibold leading-snug truncate ${verified ? 'text-emerald-900' : 'text-slate-600'}`}>{label}</p>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
 
                       {/* Nguồn dữ liệu */}
-                      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+                      <div className="bg-white rounded-md border border-slate-200 p-5 shadow-sm">
                         <div className="pb-3 mb-3 border-b border-slate-100">
-                          <h3 className="text-[16px] font-bold text-slate-900">Nguồn dữ liệu &amp; Xuất xứ thẩm định</h3>
+                          <h3 className="text-base sm:text-lg font-bold text-slate-900">Nguồn dữ liệu &amp; Xuất xứ thẩm định</h3>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-[13px]">
-                          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <span className="text-slate-500 text-[12px] block">Nguồn cơ sở dữ liệu:</span>
-                            <span className="font-bold text-slate-900 mt-0.5 block">Danh mục Đơn vị Gốc (Toàn ngành)</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                          <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
+                            <span className="text-slate-500 text-xs block">Nguồn cơ sở dữ liệu:</span>
+                            <span className="font-bold text-slate-900 mt-0.5 block">{SOURCE_KIND_LABELS[currentCaseData?.evidence?.unit_source_kind] || SOURCE_KIND_LABELS[currentCaseData?.evidence?.source_kind] || 'Danh mục đơn vị nghiệp vụ'}</span>
                           </div>
-                          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <span className="text-slate-500 text-[12px] block">Phiên bản danh mục:</span>
-                            <span className="font-mono font-bold text-slate-900 mt-0.5 block">v2026.01 (Chuẩn hóa)</span>
+                          <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
+                            <span className="text-slate-500 text-xs block">Phiên bản danh mục:</span>
+                            <span className="font-mono font-bold text-slate-900 mt-0.5 block">{currentCaseData?.evidence?.registry_version || '—'}</span>
                           </div>
-                          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <span className="text-slate-500 text-[12px] block">Căn cứ quy định:</span>
-                            <span className="font-bold text-slate-900 mt-0.5 block">Nghị định 157/2025/NĐ-CP</span>
+                          <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
+                            <span className="text-slate-500 text-xs block">Căn cứ quy định:</span>
+                            <span className="font-bold text-slate-900 mt-0.5 block">{eligibility.length > 0 ? eligibility.map((item) => item.policy_id).filter(Boolean).join(', ') : 'Chưa có căn cứ chính sách'}</span>
                           </div>
-                          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <span className="text-slate-500 text-[12px] block">Trạng thái đối chiếu:</span>
-                            <span className="font-bold text-emerald-600 mt-0.5 block">Chính xác (100%)</span>
+                          <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
+                            <span className="text-slate-500 text-xs block">Phiên bản bộ tiêu chí:</span>
+                            <span className="font-mono font-bold text-slate-900 mt-0.5 block">{taxonomyVersion || '—'}</span>
                           </div>
                         </div>
+
+                        {eligibility.some((item) => item.evidence && Object.keys(item.evidence).length > 0) && (
+                          <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
+                            <span className="text-slate-500 text-xs font-semibold uppercase tracking-wide">Căn cứ chi tiết theo từng quy định</span>
+                            {eligibility.filter((item) => item.evidence).map((item, idx) => (
+                              <div key={`${item.policy_id || 'policy'}-evidence-${idx}`} className="text-[12.5px] bg-slate-50 rounded-md border border-slate-200 p-3">
+                                <div className="font-semibold text-slate-800 mb-1">
+                                  {item.policy_id} {item.policy_version && <span className="font-mono text-[11px] text-slate-400">v{item.policy_version}</span>}
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5 text-slate-600">
+                                  {item.evidence?.source_ref && <div><span className="text-slate-400">Nguồn:</span> {item.evidence.source_ref}</div>}
+                                  {item.evidence?.as_of_date && <div><span className="text-slate-400">Tính đến:</span> {item.evidence.as_of_date}</div>}
+                                  {item.evidence?.scope_only !== undefined && (
+                                    <div><span className="text-slate-400">Chỉ phạm vi áp dụng:</span> {item.evidence.scope_only ? 'Có' : 'Không'}</div>
+                                  )}
+                                  {item.evidence?.facts_used && Object.keys(item.evidence.facts_used).length > 0 && (
+                                    <div className="col-span-2"><span className="text-slate-400">Dữ kiện sử dụng:</span> {JSON.stringify(item.evidence.facts_used)}</div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       {/* Action Bar for Verified Result */}
                       <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3">
                         <button
                           type="button"
-                          onClick={() => handleOpenOriginalDossier()}
-                          className="px-4 py-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[13px] font-semibold flex items-center justify-center shadow-xs transition-colors cursor-pointer"
+                          onClick={handleExportPdf}
+                          className="px-4 py-2.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                          title="In hoặc lưu kết quả thẩm định ra PDF"
                         >
-                          <span>Xem hồ sơ gốc</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenDetailedCompare()}
-                          className="px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold flex items-center justify-center shadow-xs transition-colors cursor-pointer"
-                        >
-                          <span>Đối chiếu chi tiết</span>
+                          <Download className="w-4 h-4 text-slate-500" />
+                          <span>Xuất biên bản (PDF)</span>
                         </button>
                       </div>
                     </div>
@@ -2040,6 +2413,8 @@ export default function CABQPVerification() {
                 {appState === 'needs-verification' && (
                   <NeedsVerificationView
                     candidateName={formValues.fullName}
+                    formValues={formValues}
+                    currentCaseData={currentCaseData}
                     onViewOriginalDossier={handleOpenOriginalDossier}
                     onViewDetailedCompare={handleOpenDetailedCompare}
                   />
@@ -2069,11 +2444,24 @@ export default function CABQPVerification() {
         <div className="hidden sm:block">Bản quyền dữ liệu nghiệp vụ — Bảo mật theo cấp độ ngành</div>
       </footer>
 
-      {/* Modals for Xem hồ sơ gốc & Đối chiếu chi tiết */}
+      {modalLoadError && (
+        <div className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-md border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800 shadow-lg">
+          <div className="flex items-start justify-between gap-3">
+            <span>{modalLoadError}</span>
+            <button type="button" onClick={() => setModalLoadError(null)} className="text-red-500 hover:text-red-700">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modals for Xem hồ sơ gốc & Đối chiếu chi tiết — both render the real
+          case detail fetched by openCaseModal(); no client-side approval
+          step here, decisions go through the Review queue's real endpoint. */}
       <OriginalDossierModal
         isOpen={isOriginalDossierOpen}
         onClose={() => setIsOriginalDossierOpen(false)}
-        caseData={modalCaseData}
+        caseDetail={modalCaseDetail}
         onOpenCompare={() => {
           setIsOriginalDossierOpen(false);
           setIsDetailedCompareOpen(true);
@@ -2083,10 +2471,7 @@ export default function CABQPVerification() {
       <DetailedComparisonModal
         isOpen={isDetailedCompareOpen}
         onClose={() => setIsDetailedCompareOpen(false)}
-        caseData={modalCaseData}
-        onApprove={() => {
-          setIsDetailedCompareOpen(false);
-        }}
+        caseDetail={modalCaseDetail}
       />
 
       {/* OCR Result & Entity Extraction Review Modal */}
@@ -2096,15 +2481,18 @@ export default function CABQPVerification() {
         file={uploadedFile}
         filePreviewUrl={filePreviewUrl}
         extractedData={extractedData}
+        onConfirmBulk={async (jobId, mapping) => {
+          const response = await axios.post(`/api/v1/bulk/${jobId}/confirm`, { mapping }, { timeout: 10000 });
+          setUploadMessage('Danh sách đã được tiếp nhận và đang chờ xử lý.');
+          return response.data;
+        }}
         onConfirmAndSearch={(updatedFields) => {
-          setFormValues((prev) => ({
-            ...prev,
-            ...updatedFields,
-          }));
+          // Pass the edited values straight into handleSearch rather than
+          // writing state and hoping React has flushed before the call — the
+          // previous setTimeout(60) version silently searched on stale values.
+          setFormValues((prev) => ({ ...prev, ...updatedFields }));
           setIsOcrModalOpen(false);
-          setTimeout(() => {
-            handleSearch();
-          }, 60);
+          handleSearch(null, { values: updatedFields, correctedFrom: pendingCaseId });
         }}
       />
     </div>
@@ -2112,112 +2500,100 @@ export default function CABQPVerification() {
 }
 
 // Sub-Component: Needs Verification View
-function NeedsVerificationView({ candidateName, onViewOriginalDossier, onViewDetailedCompare }) {
-  const [selectedRow, setSelectedRow] = useState(2);
+function NeedsVerificationView({ candidateName, formValues, currentCaseData, onViewOriginalDossier, onViewDetailedCompare }) {
+  const [selectedRow, setSelectedRow] = useState(1);
   const [detailTab, setDetailTab] = useState('identity');
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
 
-  const candidates = [
-    {
-      id: 1,
-      name: candidateName || 'Trần Văn Bình',
-      year: '1982',
-      dept: 'Quân khu 7',
-      group: 'Sĩ quan Quân đội',
-      groupColor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    },
-    {
-      id: 2,
-      name: candidateName || 'Trần Văn Bình',
-      year: '1985',
-      dept: 'Công an Q. Hoàng Mai',
-      group: 'Cán bộ, công chức',
-      groupColor: 'bg-blue-50 text-blue-700 border-blue-200',
-    },
-    {
-      id: 3,
-      name: candidateName || 'Trần Văn Bình',
-      year: '1985',
-      dept: 'Học viện ANND',
-      group: 'Học viên',
-      groupColor: 'bg-purple-50 text-purple-700 border-purple-200',
-    },
-    {
-      id: 4,
-      name: candidateName || 'Trần Văn Bình',
-      year: '1983',
-      dept: 'Bộ Tư lệnh CSCĐ',
-      group: 'Hạ sĩ quan',
-      groupColor: 'bg-amber-50 text-amber-800 border-amber-200',
-    },
-  ];
+  const displayName = candidateName || formValues?.fullName || 'Đối tượng xác minh';
+  const displayYear = formValues?.birthYear || '—';
 
-  return (
-    <div className="space-y-5">
-      {/* Warning Banner */}
-      <div className="relative overflow-hidden rounded-xl bg-amber-50 border border-amber-300 p-6 shadow-sm">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-full bg-white text-amber-600 flex items-center justify-center border border-amber-200 shadow-sm flex-shrink-0">
-              <AlertTriangle className="w-7 h-7" />
-            </div>
-            <div>
-              <h2 className="text-[24px] md:text-[26px] font-bold text-red-600 leading-tight">
-                Chưa xác định phạm vi
-              </h2>
-              <p className="text-[14px] text-amber-900 mt-1">
-                Tìm thấy nhiều hồ sơ có thông tin tương đồng nhưng phân loại đối tượng chưa đồng nhất. Tuân thủ nguyên tắc không tự ý áp đặt thông tin, chuyển sang quy trình thẩm định chuyên sâu.
-              </p>
-            </div>
+  // Real candidates come from the resolver's top_candidates. The resolver takes one
+  // of two shapes depending on how the search was run:
+  //  - unit-name lookup (PersonResolver not involved): same person on every row,
+  //    only the matched unit/org/score differ -> canonical_name/unit_id.
+  //  - person-name lookup (PersonResolver): a different real person matched on every
+  //    row -> full_name/canonical_unit_name/canonical_unit_id.
+  // Normalize both into the exact fields the view below renders, so nothing past
+  // this point needs to branch on which resolver produced the data.
+  const rawCandidates = Array.isArray(currentCaseData?.topCandidates) ? currentCaseData.topCandidates : [];
+  const isPersonLookup = rawCandidates.some((c) => c.full_name || c.canonical_unit_name);
+
+  if (rawCandidates.length === 0) {
+    return (
+      <div className="rounded-md bg-white p-6 shadow-sm">
+        <div className="flex items-start gap-4">
+          <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-500">
+            <HelpCircle className="h-5 w-5" />
           </div>
-
-          <div className="flex-shrink-0">
-            <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 font-bold text-[13.5px] shadow-sm">
-              <HelpCircle className="w-4 h-4 text-amber-700" />
-              Cần xác minh thêm
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Candidate Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <h3 className="text-[16px] font-bold text-slate-900">Danh sách hồ sơ phù hợp (12 kết quả)</h3>
-            <span className="text-[12px] text-slate-500">(Hiển thị 4 hồ sơ xác suất cao nhất)</span>
-          </div>
-
-          <div className="relative">
-            <button
-              onClick={() => setIsFilterOpen(!isFilterOpen)}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-[13px] font-semibold text-slate-900 flex items-center gap-1.5 shadow-sm"
-            >
-              <Filter className="w-3.5 h-3.5 text-slate-500" />
-              <span>Bộ lọc</span>
-            </button>
-            {isFilterOpen && (
-              <div className="absolute right-0 mt-1.5 w-60 bg-white border border-slate-200 rounded-lg shadow-xl p-3 z-30 text-[12.5px]">
-                <p className="font-bold text-slate-900 mb-2">Lọc theo nhóm đối tượng:</p>
-                <label className="flex items-center gap-2 py-1 cursor-pointer">
-                  <input type="checkbox" defaultChecked className="rounded text-blue-600" />
-                  <span>Cán bộ, công chức CA</span>
-                </label>
-                <label className="flex items-center gap-2 py-1 cursor-pointer">
-                  <input type="checkbox" defaultChecked className="rounded text-blue-600" />
-                  <span>Sĩ quan Quân đội BQP</span>
-                </label>
-                <label className="flex items-center gap-2 py-1 cursor-pointer">
-                  <input type="checkbox" defaultChecked className="rounded text-blue-600" />
-                  <span>Học viên chuyên ban</span>
-                </label>
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold text-slate-900">Chưa đủ dữ liệu để xác định</h2>
+            <p className="mt-1 text-sm leading-relaxed text-slate-600">
+              Hệ thống chưa tìm thấy ứng viên hoặc đơn vị đủ tin cậy để đối chiếu. Hãy bổ sung mã cá nhân,
+              tên đơn vị đầy đủ, chức vụ hoặc tài liệu có căn cứ rõ hơn.
+            </p>
+            {formValues?.queryText && (
+              <div className="mt-4 rounded-md bg-slate-50 px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Nội dung đã tra cứu</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{formValues.queryText}</p>
               </div>
             )}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  const groupColors = {
+    BCA: 'bg-red-50 text-red-700 border-red-200',
+    BQP: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    OTHER: 'bg-slate-50 text-slate-600 border-slate-200',
+  };
+  const candidates = rawCandidates.map((c, idx) => ({
+    id: idx + 1,
+    subjectName: isPersonLookup ? c.full_name || '—' : displayName,
+    subjectYear: isPersonLookup ? c.birth_year || 'Chưa rõ' : displayYear,
+    unitName: c.canonical_name || c.canonical_unit_name || c.unit_id || c.canonical_unit_id || 'Không rõ đơn vị',
+    unitId: c.unit_id || c.canonical_unit_id || '—',
+    orgType: c.organization_type || 'OTHER',
+    orgBadgeClass: groupColors[c.organization_type] || groupColors.OTHER,
+    score: typeof c.score === 'number' ? `${Math.round(c.score)}%` : c.score ?? '—',
+  }));
+  const selectedCandidate = candidates.find((c) => c.id === selectedRow) || candidates[0];
+
+  return (
+    <div className="space-y-5">
+      {/* Candidate Table */}
+      <div className="bg-white rounded-md border border-slate-200 shadow-sm p-5">
+        <div className="mb-4 flex items-start gap-3">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-[#FDF0BE] text-amber-600">
+            <AlertTriangle className="h-[18px] w-[18px]" />
+          </div>
+          <div className="min-w-0 pt-0.5">
+            <h2 className="text-[16px] font-bold text-slate-900">Có nhiều kết quả phù hợp</h2>
+            <p className="mt-0.5 text-[12.5px] leading-relaxed text-slate-500">
+              Chọn một ứng viên bên dưới để kiểm tra trước khi đưa ra kết luận.
+            </p>
+          </div>
+        </div>
+        <div className="mb-4 rounded-md border border-red-100 bg-red-50/60 px-4 py-3 text-sm">
+          <span className="text-slate-500">Thông tin đã nhập:</span>{' '}
+          <strong className="text-slate-900">{displayName}</strong>
+          {displayYear !== '—' && <span className="text-slate-600"> · Năm sinh {displayYear}</span>}
+        </div>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <h3 className="text-[16px] font-bold text-slate-900">
+              {isPersonLookup ? `Đối tượng khớp (${candidates.length} kết quả)` : `Đơn vị khớp (${candidates.length} kết quả)`}
+            </h3>
+            <span className="text-[12px] text-slate-500">
+              {isPersonLookup ? 'Từ danh mục đối tượng, xếp theo mức độ phù hợp' : 'Từ danh mục đơn vị, xếp theo mức độ phù hợp'}
+            </span>
+          </div>
+
+        </div>
 
         {/* Mobile Candidates List (< sm) */}
-        <div className="block sm:hidden divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
+        <div className="block sm:hidden divide-y divide-slate-100 border border-slate-200 rounded-md overflow-hidden">
           {candidates.map((cand) => {
             const isSelected = cand.id === selectedRow;
             return (
@@ -2225,36 +2601,45 @@ function NeedsVerificationView({ candidateName, onViewOriginalDossier, onViewDet
                 key={cand.id}
                 onClick={() => setSelectedRow(cand.id)}
                 className={`p-3.5 space-y-2 cursor-pointer transition-colors ${
-                  isSelected ? 'bg-blue-50/80 border-l-4 border-l-blue-600' : 'hover:bg-slate-50'
+                  isSelected ? 'bg-red-50/80' : 'hover:bg-slate-50'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900 text-[14px]">{cand.name}</span>
+                  <span className="font-bold text-slate-900 text-[14px]">{isPersonLookup ? cand.subjectName : cand.unitName}</span>
                   <span className="text-slate-500 text-[12px] font-mono">#{cand.id}</span>
                 </div>
-                <div className="text-[12.5px] text-slate-600">
-                  Năm sinh: <strong>{cand.year}</strong> • {cand.dept}
+                {isPersonLookup && (
+                  <div className="text-[12.5px] text-slate-600">Đơn vị: {cand.unitName}</div>
+                )}
+                <div className="flex items-center gap-2.5 text-[12.5px] text-slate-600">
+                  <span>Độ tin cậy: <strong>{cand.score}</strong></span>
+                  <span className="w-px h-3 bg-slate-300" />
+                  <span>Mã đơn vị: {cand.unitId}</span>
                 </div>
                 <div>
-                  <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11.5px] font-semibold border ${cand.groupColor}`}>
-                    {cand.group}
+                  <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11.5px] font-semibold border ${cand.orgBadgeClass}`}>
+                    {cand.orgType}
                   </span>
                 </div>
               </div>
             );
           })}
+          {candidates.length === 0 && (
+            <div className="p-6 text-center text-slate-400 text-[13px]">Không tìm thấy kết quả phù hợp.</div>
+          )}
         </div>
 
         {/* Desktop Candidates Table (>= sm) */}
-        <div className="hidden sm:block overflow-x-auto border border-slate-200 rounded-lg">
+        <div className="hidden sm:block overflow-x-auto border border-slate-200 rounded-md">
           <table className="w-full text-left text-[13.5px] border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-[12.5px] font-bold text-slate-600">
                 <th className="py-3 px-4 w-12 text-center">#</th>
-                <th className="py-3 px-4">Họ và tên</th>
-                <th className="py-3 px-4">Năm sinh</th>
-                <th className="py-3 px-4">Đơn vị</th>
-                <th className="py-3 px-4">Nhóm đối tượng</th>
+                {isPersonLookup && <th className="py-3 px-4">Họ và tên</th>}
+                <th className="py-3 px-4">Đơn vị khớp</th>
+                <th className="py-3 px-4">Mã đơn vị</th>
+                <th className="py-3 px-4">Độ tin cậy</th>
+                <th className="py-3 px-4">Tổ chức</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -2265,34 +2650,38 @@ function NeedsVerificationView({ candidateName, onViewOriginalDossier, onViewDet
                     key={cand.id}
                     onClick={() => setSelectedRow(cand.id)}
                     className={`cursor-pointer transition-colors ${
-                      isSelected ? 'bg-blue-50/80 font-medium' : 'hover:bg-slate-50'
+                      isSelected ? 'bg-red-50/80 font-medium' : 'hover:bg-slate-50'
                     }`}
                   >
                     <td className="py-3 px-4 text-center font-bold relative">
-                      {isSelected && <span className="absolute left-0 top-0 bottom-0 w-1 bg-blue-600" />}
-                      <span className={isSelected ? 'text-blue-600' : 'text-slate-400'}>{cand.id}</span>
+                      <span className={isSelected ? 'text-red-600' : 'text-slate-400'}>{cand.id}</span>
                     </td>
-                    <td className="py-3 px-4 font-bold text-slate-900">{cand.name}</td>
-                    <td className="py-3 px-4 text-slate-800">{cand.year}</td>
-                    <td className="py-3 px-4 text-slate-800">{cand.dept}</td>
+                    {isPersonLookup && <td className="py-3 px-4 font-bold text-slate-900">{cand.subjectName}</td>}
+                    <td className="py-3 px-4 font-bold text-slate-900">{cand.unitName}</td>
+                    <td className="py-3 px-4 text-slate-500 font-mono text-[12px]">{cand.unitId}</td>
+                    <td className="py-3 px-4 text-slate-800">{cand.score}</td>
                     <td className="py-3 px-4">
-                      <span className={`inline-block px-2.5 py-0.5 rounded-full text-[12px] font-semibold border ${cand.groupColor}`}>
-                        {cand.group}
+                      <span className={`inline-block px-2.5 py-0.5 rounded-full text-[12px] font-semibold border ${cand.orgBadgeClass}`}>
+                        {cand.orgType}
                       </span>
                     </td>
                   </tr>
                 );
               })}
+              {candidates.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-slate-400">Không tìm thấy kết quả phù hợp.</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Candidate Detail Panel */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+      <div className="bg-white rounded-md border border-slate-200 shadow-sm p-5">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-3">
-            <span className="px-2.5 py-0.5 rounded-md bg-blue-100 text-blue-600 font-bold text-[12px] border border-blue-200">
+            <span className="px-2.5 py-0.5 rounded-md bg-red-100 text-red-600 font-bold text-[12px] border border-red-200">
               Hồ sơ #{selectedRow}
             </span>
             <h3 className="text-[16px] font-bold text-slate-900">Thông tin chi tiết đối chiếu</h3>
@@ -2303,34 +2692,34 @@ function NeedsVerificationView({ candidateName, onViewOriginalDossier, onViewDet
           <button
             onClick={() => setDetailTab('identity')}
             className={`pb-2.5 font-semibold transition-all relative ${
-              detailTab === 'identity' ? 'text-blue-600' : 'text-slate-500 hover:text-slate-900'
+              detailTab === 'identity' ? 'text-red-600' : 'text-slate-500 hover:text-slate-900'
             }`}
           >
             Định danh
             {detailTab === 'identity' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600 rounded-full" />
             )}
           </button>
           <button
             onClick={() => setDetailTab('group')}
             className={`pb-2.5 font-medium transition-all relative ${
-              detailTab === 'group' ? 'text-blue-600 font-semibold' : 'text-slate-500 hover:text-slate-900'
+              detailTab === 'group' ? 'text-red-600 font-semibold' : 'text-slate-500 hover:text-slate-900'
             }`}
           >
             Nhóm đối tượng
             {detailTab === 'group' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600 rounded-full" />
             )}
           </button>
           <button
             onClick={() => setDetailTab('benefit')}
             className={`pb-2.5 font-medium transition-all relative ${
-              detailTab === 'benefit' ? 'text-blue-600 font-semibold' : 'text-slate-500 hover:text-slate-900'
+              detailTab === 'benefit' ? 'text-red-600 font-semibold' : 'text-slate-500 hover:text-slate-900'
             }`}
           >
             Chế độ
             {detailTab === 'benefit' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600 rounded-full" />
             )}
           </button>
         </div>
@@ -2338,40 +2727,78 @@ function NeedsVerificationView({ candidateName, onViewOriginalDossier, onViewDet
         <div className="py-4">
           {detailTab === 'identity' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[13.5px]">
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-500 text-[12px] block">Họ và tên:</span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{candidates[selectedRow - 1]?.name}</span>
+              <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
+                <span className="text-slate-500 text-[12px] block">
+                  {isPersonLookup ? `Họ và tên (khớp #${selectedRow}):` : 'Họ và tên (đã nhập):'}
+                </span>
+                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.subjectName ?? '—'}</span>
               </div>
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-500 text-[12px] block">Năm sinh:</span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{candidates[selectedRow - 1]?.year} (40 tuổi)</span>
+              <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
+                <span className="text-slate-500 text-[12px] block">
+                  {isPersonLookup ? 'Năm sinh (khớp):' : 'Năm sinh (đã nhập):'}
+                </span>
+                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.subjectYear ?? '—'}</span>
               </div>
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-500 text-[12px] block">Mã định danh:</span>
-                <span className="font-mono font-bold text-blue-600 mt-0.5 block">CA-8492</span>
+              <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
+                <span className="text-slate-500 text-[12px] block">Mã hồ sơ:</span>
+                <span className="font-mono font-bold text-red-600 mt-0.5 block">
+                  {formValues?.identifier || currentCaseData?.case_code || '—'}
+                </span>
               </div>
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                <span className="text-slate-500 text-[12px] block">Đơn vị công tác:</span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{candidates[selectedRow - 1]?.dept}</span>
+              <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
+                <span className="text-slate-500 text-[12px] block">Đơn vị đang xem (khớp #{selectedRow}):</span>
+                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.unitName ?? '—'}</span>
               </div>
             </div>
           )}
 
           {detailTab === 'group' && (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-[13px] text-amber-900">
-              <p className="font-bold">Đánh giá phân loại hồ sơ #{selectedRow}:</p>
+            <div className="p-4 bg-[#FDF0BE] border border-amber-200 rounded-md text-[13px] text-amber-900">
+              <p className="font-bold">Chi tiết khớp đơn vị #{selectedRow}:</p>
               <p className="mt-1">
-                Đối tượng trùng khớp tên và năm sinh nhưng nằm trong danh sách điều động chưa cập nhật quyết định tiếp nhận chính thức. Cần bổ sung tài liệu điều chuyển nội bộ.
+                Mã đơn vị <strong>{selectedCandidate?.unitId ?? '—'}</strong>, tổ chức{' '}
+                <strong>{selectedCandidate?.orgType ?? 'chưa xác định'}</strong>, mức độ phù hợp{' '}
+                <strong>{selectedCandidate?.score ?? '—'}</strong>. Có nhiều hơn một đơn vị khớp tên nên hệ thống
+                không tự động kết luận CA/BQP — cần thẩm định thủ công để chọn đúng đơn vị công tác hiện tại.
               </p>
             </div>
           )}
 
           {detailTab === 'benefit' && (
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-[13px] text-slate-900">
-              <p className="font-bold">Tình trạng chế độ chi trả:</p>
-              <p className="mt-1 text-slate-500">
-                Đang tạm hoãn quyết toán đối soát liên ngành cho đến khi xác minh đầy đủ đơn vị quản lý trực tiếp.
-              </p>
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-md text-[13px] text-slate-900 space-y-2">
+              {(currentCaseData?.subject_group_method || currentCaseData?.taxonomy_version) && (
+                <p className="text-[11.5px] text-slate-500 pb-1 border-b border-slate-200">
+                  {currentCaseData?.subject_group_method &&
+                    (SUBJECT_GROUP_METHOD_LABELS[currentCaseData.subject_group_method] || currentCaseData.subject_group_method)}
+                  {currentCaseData?.taxonomy_version && (
+                    <span className="ml-1 text-slate-400">· Bộ tiêu chí {currentCaseData.taxonomy_version}</span>
+                  )}
+                </p>
+              )}
+              {Array.isArray(currentCaseData?.eligibility) && currentCaseData.eligibility.length > 0 ? (
+                <div className="space-y-2">
+                  {currentCaseData.eligibility.map((e, i) => (
+                    <div key={i} className="border-b border-slate-200 pb-2 last:border-0 last:pb-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">
+                          {e.policy_id}{e.policy_version && <span className="font-mono text-[10.5px] text-slate-400 ml-1">v{e.policy_version}</span>}
+                        </span>
+                        <span className="text-slate-500">{POLICY_STATUS_LABELS[e.status] || 'Chưa xác định'}{e.reason ? ` — ${e.reason}` : ''}</span>
+                      </div>
+                      {e.evidence?.as_of_date && (
+                        <p className="text-[11px] text-slate-400 mt-0.5">Tính đến: {e.evidence.as_of_date}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <p className="font-bold">Tình trạng chế độ chi trả:</p>
+                  <p className="mt-1 text-slate-500">
+                    Chưa đủ dữ liệu để đánh giá chế độ cho hồ sơ này hoặc chưa xác định được phạm vi tổ chức.
+                  </p>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -2379,43 +2806,17 @@ function NeedsVerificationView({ candidateName, onViewOriginalDossier, onViewDet
         <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3">
           <button
             type="button"
-            onClick={() => {
-              const selectedCandidate = candidates.find((c) => c.id === selectedRow) || candidates[0];
-              if (onViewOriginalDossier) {
-                onViewOriginalDossier({
-                  fullName: selectedCandidate.name,
-                  birthYear: selectedCandidate.year,
-                  department: selectedCandidate.dept,
-                  position: selectedCandidate.group,
-                  identifier: 'CA-8492',
-                  caseCode: `#HS-2026-0${selectedCandidate.id}84`,
-                  orgType: selectedCandidate.dept.includes('Quân') ? 'BQP' : 'BCA',
-                });
-              }
-            }}
-            className="px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-800 text-[13px] font-semibold flex items-center justify-center transition-colors cursor-pointer"
+            onClick={() => onViewOriginalDossier && onViewOriginalDossier(currentCaseData?.case_id)}
+            disabled={!currentCaseData?.case_id}
+            className="px-4 py-2 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-[13px] font-semibold flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span>Xem hồ sơ gốc</span>
           </button>
-
           <button
             type="button"
-            onClick={() => {
-              const selectedCandidate = candidates.find((c) => c.id === selectedRow) || candidates[0];
-              if (onViewDetailedCompare) {
-                onViewDetailedCompare({
-                  fullName: selectedCandidate.name,
-                  birthYear: selectedCandidate.year,
-                  department: selectedCandidate.dept,
-                  position: selectedCandidate.group,
-                  identifier: 'CA-8492',
-                  caseCode: `#HS-2026-0${selectedCandidate.id}84`,
-                  orgType: selectedCandidate.dept.includes('Quân') ? 'BQP' : 'BCA',
-                  status: 'AMBIGUOUS',
-                });
-              }
-            }}
-            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold flex items-center justify-center shadow-sm transition-colors cursor-pointer"
+            onClick={() => onViewDetailedCompare && onViewDetailedCompare(currentCaseData?.case_id)}
+            disabled={!currentCaseData?.case_id}
+            className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white text-[13px] font-semibold flex items-center justify-center shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span>Đối chiếu chi tiết</span>
           </button>
@@ -2430,7 +2831,7 @@ function NoConclusionView({ formValues, onRetrySearch, onEditInfo }) {
   return (
     <div className="space-y-5">
       {/* Neutral Banner */}
-      <div className="rounded-xl bg-slate-50 border border-slate-300 p-6 shadow-sm">
+      <div className="rounded-md bg-slate-50 border border-slate-300 p-6 shadow-sm">
         <div className="flex items-start gap-4">
           <div className="w-12 h-12 rounded-full bg-white text-slate-500 flex items-center justify-center border border-slate-300 shadow-sm flex-shrink-0">
             <HelpCircle className="w-7 h-7" />
@@ -2440,17 +2841,17 @@ function NoConclusionView({ formValues, onRetrySearch, onEditInfo }) {
               KẾT QUẢ ĐỐI SOÁT
             </span>
             <h2 className="text-[22px] sm:text-[24px] md:text-[26px] font-bold text-slate-900 leading-tight">
-              Không tìm thấy hồ sơ / Chưa có kết luận
+              Không có trong dữ liệu quản lý CA/BQP
             </h2>
             <p className="text-[14px] text-slate-600 mt-1 leading-relaxed">
-              Không tìm thấy dữ liệu đối soát trong Danh mục Đơn vị Gốc của Bộ Công an hoặc Bộ Quốc phòng{formValues.identifier ? ` đối với mã định danh "${formValues.identifier}"` : ''}. Hệ thống tuân thủ nguyên tắc không tự ý áp đặt nhãn cơ quan khi chưa đủ căn cứ xác thực.
+              Không tìm thấy hồ sơ trùng khớp trong dữ liệu quản lý hiện có của Bộ Công an hoặc Bộ Quốc phòng{formValues.identifier ? ` đối với mã định danh "${formValues.identifier}"` : ''}. Kết quả này xác định đối tượng không thuộc phạm vi theo dữ liệu hiện có; không đồng nghĩa với xác nhận pháp lý rằng hồ sơ không tồn tại.
             </p>
           </div>
         </div>
       </div>
 
       {/* Searched Chips */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+      <div className="bg-white rounded-md border border-slate-200 p-5 shadow-sm">
         <h4 className="text-[14.5px] font-bold text-slate-900 mb-3">Thông tin đã tra cứu</h4>
         <div className="flex flex-wrap gap-2.5">
           <div className="px-3 py-1.5 bg-white border border-slate-200 rounded-md text-[13px] shadow-sm">
@@ -2471,64 +2872,64 @@ function NoConclusionView({ formValues, onRetrySearch, onEditInfo }) {
           </div>
           <div className="px-3 py-1.5 bg-white border border-slate-200 rounded-md text-[13px] shadow-sm">
             <span className="text-slate-400 mr-1.5">Mã định danh:</span>
-            <strong className="text-blue-600 font-mono font-bold">{formValues.identifier || 'Chưa cung cấp'}</strong>
+            <strong className="text-red-600 font-mono font-bold">{formValues.identifier || 'Chưa cung cấp'}</strong>
           </div>
         </div>
       </div>
 
       {/* 2x2 Action Guidance Grid */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+      <div className="bg-white rounded-md border border-slate-200 p-5 shadow-sm">
         <h4 className="text-[15px] font-bold text-slate-900 mb-3.5">Phương án tra cứu bổ sung</h4>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           <div
             onClick={onRetrySearch}
-            className="p-3.5 rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer transition-all flex items-start gap-3 group"
+            className="p-3.5 rounded-md border border-slate-200 hover:border-red-400 hover:bg-red-50/40 cursor-pointer transition-all flex items-start gap-3 group"
           >
-            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-colors">
               1
             </span>
             <div>
-              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-blue-600">Kiểm tra lại họ tên</h5>
+              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-red-600">Kiểm tra lại họ tên</h5>
               <p className="text-[12px] text-slate-500 mt-0.5">Thử tên viết tắt, bỏ dấu hoặc tên đầy đủ theo CCCD.</p>
             </div>
           </div>
 
           <div
             onClick={onRetrySearch}
-            className="p-3.5 rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer transition-all flex items-start gap-3 group"
+            className="p-3.5 rounded-md border border-slate-200 hover:border-red-400 hover:bg-red-50/40 cursor-pointer transition-all flex items-start gap-3 group"
           >
-            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-colors">
               2
             </span>
             <div>
-              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-blue-600">Tra theo số hiệu</h5>
+              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-red-600">Tra theo số hiệu</h5>
               <p className="text-[12px] text-slate-500 mt-0.5">Nếu có mã định danh khác, hãy thử tra cứu trực tiếp số hiệu.</p>
             </div>
           </div>
 
           <div
             onClick={onRetrySearch}
-            className="p-3.5 rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer transition-all flex items-start gap-3 group"
+            className="p-3.5 rounded-md border border-slate-200 hover:border-red-400 hover:bg-red-50/40 cursor-pointer transition-all flex items-start gap-3 group"
           >
-            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-colors">
               3
             </span>
             <div>
-              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-blue-600">Tra theo đơn vị</h5>
+              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-red-600">Tra theo đơn vị</h5>
               <p className="text-[12px] text-slate-500 mt-0.5">Thử tra cứu theo đơn vị trực thuộc hoặc cấp cơ quan cao hơn.</p>
             </div>
           </div>
 
           <div
             onClick={onRetrySearch}
-            className="p-3.5 rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer transition-all flex items-start gap-3 group"
+            className="p-3.5 rounded-md border border-slate-200 hover:border-red-400 hover:bg-red-50/40 cursor-pointer transition-all flex items-start gap-3 group"
           >
-            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+            <span className="w-7 h-7 rounded-md bg-slate-100 text-slate-700 font-bold text-[13px] flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-colors">
               4
             </span>
             <div>
-              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-blue-600">Tải tài liệu</h5>
-              <p className="text-[12px] text-slate-500 mt-0.5">Dùng tệp PDF, Word, Excel hoặc ảnh để hệ thống OCR tự động.</p>
+              <h5 className="text-[13.5px] font-bold text-slate-900 group-hover:text-red-600">Tải tài liệu</h5>
+              <p className="text-[12px] text-slate-500 mt-0.5">Dùng tệp PDF, Word, Excel hoặc ảnh để hệ thống tự động đọc thông tin.</p>
             </div>
           </div>
         </div>
@@ -2537,7 +2938,7 @@ function NoConclusionView({ formValues, onRetrySearch, onEditInfo }) {
           <button
             type="button"
             onClick={onRetrySearch}
-            className="px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-800 font-semibold text-[13.5px] flex items-center justify-center"
+            className="px-4 py-2 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-800 font-semibold text-[13.5px] flex items-center justify-center"
           >
             <span>Tra cứu lại</span>
           </button>
@@ -2545,7 +2946,7 @@ function NoConclusionView({ formValues, onRetrySearch, onEditInfo }) {
           <button
             type="button"
             onClick={onEditInfo}
-            className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[13.5px] flex items-center justify-center shadow-sm"
+            className="px-5 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold text-[13.5px] flex items-center justify-center shadow-sm"
           >
             <span>Bổ sung thông tin</span>
           </button>
