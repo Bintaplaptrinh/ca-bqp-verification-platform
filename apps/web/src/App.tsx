@@ -1,12 +1,38 @@
 import { useEffect, useState } from "react";
-import { KeyRound, LockKeyhole, LogIn, UserRound } from "./icons/index.jsx";
 import { changePassword, fetchCurrentUser, login, logout } from "./auth";
 import type { CurrentUser } from "./types";
 import VerificationModule from "./components/VerificationModule.jsx";
+import { BrandTitle } from "./components/layout/AppHeader.jsx";
+
+const inputClass =
+  "input-auth w-full h-10 px-3 rounded-md border border-slate-300 bg-white text-sm text-slate-900 placeholder-slate-400 outline-none";
+
+/**
+ * Signed-out layout: the red bronze-drum background fills the screen and the
+ * system title sits centered above the form.
+ */
+function AuthShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="fixed inset-0 flex flex-col overflow-hidden bg-[#8f0a12] bg-cover bg-center"
+      style={{ backgroundImage: "url(/login-bg.jpg)" }}
+    >
+      <main className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-6 px-4 py-8">
+        <BrandTitle tone="light" size="large" align="center" />
+        <div className="w-full max-w-[400px]">{children}</div>
+      </main>
+
+      <footer className="flex-none py-3 text-center text-[11px] text-white/70">
+        Hệ thống xác minh nhân sự Bộ Công an - Bộ Quốc phòng, 2026
+      </footer>
+    </div>
+  );
+}
 
 function LoginPage({ onSignedIn }: { onSignedIn: (user: CurrentUser) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -26,86 +52,70 @@ function LoginPage({ onSignedIn }: { onSignedIn: (user: CurrentUser) => void }) 
   }
 
   return (
-    <div className="min-h-screen bg-white text-neutral-900 flex flex-col relative overflow-hidden">
-      <header className="relative z-10 bg-[#c8102e] flex items-center px-5 sm:px-10 py-3.5">
-        <div className="leading-tight">
-          <strong className="block text-white text-sm font-bold uppercase tracking-wide">Hệ thống xác minh nhân sự</strong>
-          <span className="block text-white/85 text-xs mt-0.5">Bộ Công An – Bộ Quốc Phòng</span>
-        </div>
-      </header>
+    <AuthShell>
+      <section className="bg-white rounded-md shadow-2xl border-t-4 border-[#b91c1c] px-6 py-7 sm:px-8">
+        <h1 className="text-center text-xl font-bold uppercase tracking-wide text-[#b91c1c]">Đăng nhập</h1>
+        <p className="mt-1 text-center text-xs text-slate-500">Tài khoản do quản trị viên hệ thống cấp</p>
 
-      <main className="relative z-10 flex-1 flex items-center justify-center px-4 py-10 sm:py-14 bg-neutral-50">
-        <section className="w-full max-w-[460px] bg-white rounded-md border border-neutral-200 shadow-[0_18px_55px_rgba(15,23,42,0.08)] p-6 sm:p-8">
-          <h1 className="text-2xl sm:text-[28px] font-bold tracking-tight">Đăng nhập hệ thống</h1>
-          <p className="mt-2 text-sm text-neutral-500 leading-relaxed">
-            Sử dụng tài khoản nghiệp vụ do quản trị viên cấp để tra cứu và thẩm định hồ sơ.
-          </p>
-
-          {error && (
-            <div className="mt-5 rounded-md bg-[#fbe9eb] px-4 py-3 flex gap-3 text-sm text-[#7a1220]" role="alert">
-              <div className="w-6 h-6 rounded-full bg-[#f0b6bf] flex items-center justify-center font-bold flex-shrink-0">!</div>
-              <div>
-                <strong className="block">Đăng nhập không thành công</strong>
-                <p className="mt-0.5 text-[#9e0b22]">{error}</p>
-              </div>
-            </div>
-          )}
-
-          <form className="mt-6 space-y-4" onSubmit={submit}>
-            <label className="block">
-              <span className="text-sm font-semibold text-neutral-700">Tên đăng nhập</span>
-              <div className="mt-1.5 relative">
-                <UserRound className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
-                <input
-                  className="w-full h-11 pl-9 pr-3 rounded-md border border-neutral-200 focus:border-[#c8102e] focus:ring-2 focus:ring-[#fbe9eb] outline-none text-sm"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  autoComplete="username"
-                  autoFocus
-                  required
-                />
-              </div>
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-semibold text-neutral-700">Mật khẩu</span>
-              <div className="mt-1.5 relative">
-                <KeyRound className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
-                <input
-                  className="w-full h-11 pl-9 pr-3 rounded-md border border-neutral-200 focus:border-[#c8102e] focus:ring-2 focus:ring-[#fbe9eb] outline-none text-sm"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  required
-                />
-              </div>
-            </label>
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full h-12 rounded-md bg-[#c8102e] hover:bg-[#9e0b22] active:bg-[#7a1220] disabled:bg-neutral-300 text-white font-semibold flex items-center justify-center gap-2 shadow-sm transition-colors"
-            >
-              <LogIn className="w-4.5 h-4.5" aria-hidden="true" />
-              {busy ? "Đang kiểm tra…" : "Đăng nhập"}
-            </button>
-          </form>
-
-          <div className="mt-4 flex items-start gap-2 text-xs text-neutral-500 leading-relaxed">
-            <LockKeyhole className="w-4 h-4 mt-0.5 flex-shrink-0 text-neutral-400" aria-hidden="true" />
-            <span>
-              Quyền truy cập được quản trị viên cấp theo từng tài khoản và được kiểm tra tại máy chủ ở mọi thao tác.
-            </span>
+        {error && (
+          <div className="mt-5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700" role="alert">
+            <strong className="block font-semibold">Đăng nhập không thành công</strong>
+            <span className="block mt-0.5">{error}</span>
           </div>
-        </section>
-      </main>
+        )}
 
-      <footer className="relative z-10 min-h-14 bg-white border-t border-neutral-200 px-5 sm:px-10 py-3 flex flex-col sm:flex-row items-center justify-between gap-1 text-[11px] text-neutral-500">
-        <span>Hệ thống xác minh nhân sự Bộ Công An - Bộ Quốc Phòng &copy; 2026</span>
-        <span>Dữ liệu nghiệp vụ được bảo vệ theo phân quyền</span>
-      </footer>
-    </div>
+        <form className="mt-5 space-y-4" onSubmit={submit}>
+          <div>
+            <label htmlFor="login-username" className="block mb-1 text-[13px] font-semibold text-slate-700">
+              Tên đăng nhập
+            </label>
+            <input
+              id="login-username"
+              className={inputClass}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Nhập tên đăng nhập"
+              autoComplete="username"
+              autoFocus
+              required
+            />
+          </div>
+
+          <div>
+            <label htmlFor="login-password" className="block mb-1 text-[13px] font-semibold text-slate-700">
+              Mật khẩu
+            </label>
+            <div className="relative">
+              <input
+                id="login-password"
+                className={`${inputClass} pr-14`}
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Nhập mật khẩu"
+                autoComplete="current-password"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((value) => !value)}
+                className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-slate-500 hover:text-slate-800"
+              >
+                {showPassword ? "Ẩn" : "Hiện"}
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full h-10 rounded-md bg-[#b91c1c] hover:bg-[#8a1010] disabled:bg-slate-400 text-white text-sm font-semibold transition-colors"
+          >
+            {busy ? "Đang kiểm tra" : "Đăng nhập"}
+          </button>
+        </form>
+      </section>
+    </AuthShell>
   );
 }
 
@@ -142,57 +152,60 @@ function ChangePasswordPage({ user, onDone }: { user: CurrentUser; onDone: () =>
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 flex items-center justify-center px-4 py-10">
-      <section className="w-full max-w-[460px] bg-white rounded-md border border-neutral-200 shadow-[0_18px_55px_rgba(15,23,42,0.08)] p-6 sm:p-8">
-        <h1 className="text-2xl font-bold tracking-tight">Đổi mật khẩu lần đầu</h1>
-        <p className="mt-2 text-sm text-neutral-500 leading-relaxed">
-          Tài khoản <strong>{user.username}</strong> đang dùng mật khẩu do quản trị viên cấp. Hãy đặt mật khẩu riêng
-          trước khi sử dụng hệ thống.
+    <AuthShell>
+      <section className="bg-white rounded-md shadow-2xl border-t-4 border-[#b91c1c] px-6 py-7 sm:px-8">
+        <h1 className="text-center text-xl font-bold uppercase tracking-wide text-[#b91c1c]">Đổi mật khẩu</h1>
+        <p className="mt-1 text-center text-xs text-slate-500 leading-relaxed">
+          Tài khoản <strong className="text-slate-700">{user.username}</strong> đang dùng mật khẩu do quản trị viên cấp.
+          Đặt mật khẩu riêng trước khi sử dụng.
         </p>
 
         {error && (
-          <div className="mt-5 rounded-md bg-[#fbe9eb] px-4 py-3 text-sm text-[#7a1220]" role="alert">
+          <div className="mt-5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700" role="alert">
             {error}
           </div>
         )}
 
-        <form className="mt-6 space-y-4" onSubmit={submit}>
+        <form className="mt-5 space-y-4" onSubmit={submit}>
           {[
-            { label: "Mật khẩu được cấp", value: currentPassword, set: setCurrentPassword, autoComplete: "current-password" },
-            { label: "Mật khẩu mới", value: newPassword, set: setNewPassword, autoComplete: "new-password" },
-            { label: "Xác nhận mật khẩu mới", value: confirmation, set: setConfirmation, autoComplete: "new-password" },
+            { id: "pw-current", label: "Mật khẩu được cấp", value: currentPassword, set: setCurrentPassword, autoComplete: "current-password" },
+            { id: "pw-new", label: "Mật khẩu mới", value: newPassword, set: setNewPassword, autoComplete: "new-password" },
+            { id: "pw-confirm", label: "Nhập lại mật khẩu mới", value: confirmation, set: setConfirmation, autoComplete: "new-password" },
           ].map((field) => (
-            <label className="block" key={field.label}>
-              <span className="text-sm font-semibold text-neutral-700">{field.label}</span>
+            <div key={field.id}>
+              <label htmlFor={field.id} className="block mb-1 text-[13px] font-semibold text-slate-700">
+                {field.label}
+              </label>
               <input
-                className="mt-1.5 w-full h-11 px-3 rounded-md border border-neutral-200 focus:border-[#c8102e] focus:ring-2 focus:ring-[#fbe9eb] outline-none text-sm"
+                id={field.id}
+                className={inputClass}
                 type="password"
                 value={field.value}
                 onChange={(e) => field.set(e.target.value)}
                 autoComplete={field.autoComplete}
                 required
               />
-            </label>
+            </div>
           ))}
 
           <button
             type="submit"
             disabled={busy}
-            className="w-full h-12 rounded-md bg-[#c8102e] hover:bg-[#9e0b22] disabled:bg-neutral-300 text-white font-semibold transition-colors"
+            className="w-full h-10 rounded-md bg-[#b91c1c] hover:bg-[#8a1010] disabled:bg-slate-400 text-white text-sm font-semibold transition-colors"
           >
-            {busy ? "Đang lưu…" : "Đặt mật khẩu mới"}
+            {busy ? "Đang lưu" : "Đặt mật khẩu mới"}
           </button>
         </form>
 
         <button
           type="button"
-          className="mt-3 w-full h-10 text-sm text-neutral-500 hover:text-neutral-700"
+          className="mt-2 w-full h-9 text-sm text-slate-500 hover:text-slate-800"
           onClick={onDone}
         >
           Để sau
         </button>
       </section>
-    </div>
+    </AuthShell>
   );
 }
 
@@ -210,13 +223,10 @@ export default function App() {
 
   if (booting) {
     return (
-      <div className="app-loading">
-        <div className="boot-card">
-          <div className="spinner" />
-          <div>
-            <strong>Đang khởi tạo phiên làm việc</strong>
-            <p>Đang kiểm tra thông tin đăng nhập…</p>
-          </div>
+      <div className="fixed inset-0 flex items-center justify-center bg-slate-100">
+        <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-md shadow-sm px-5 py-4">
+          <div className="w-6 h-6 border-[3px] border-red-200 border-t-red-700 rounded-full animate-spin" />
+          <span className="text-sm font-medium text-slate-700">Đang kiểm tra phiên đăng nhập</span>
         </div>
       </div>
     );
