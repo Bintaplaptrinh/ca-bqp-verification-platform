@@ -1,24 +1,26 @@
+/* Kept in the base layer so Tailwind utility classes on the same elements win. */
+@layer base {
 :root {
-  --bg: #ffffff;
+  --bg: #f1f5f9;
   --surface: #ffffff;
   --surface-2: #f7f7f7;
   --ink: #171717;
   --muted: #5c5c5c;
   --line: #e3e3e3;
   --line-strong: #c9c9c9;
-  --brand: #c8102e;
-  --brand-2: #9e0b22;
+  --brand: #b91c1c;
+  --brand-2: #8a1010;
   --brand-soft: #fbe9eb;
   --accent: #fdf0be;
-  --danger: #c8102e;
+  --danger: #b91c1c;
   --danger-soft: #fbe9eb;
   --warning: #8a5a00;
   --warning-soft: #fdf0be;
   --success: #1e7a42;
   --success-soft: #e8f5ec;
   --shadow: 0 4px 16px rgba(17, 17, 17, .06);
-  --radius: 6px;
-  --radius-sm: 4px;
+  --radius: 3px;
+  --radius-sm: 3px;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--ink);
   background: var(--bg);
@@ -289,3 +291,4 @@ tbody tr:hover { background: #fafcfc; }
 .synthetic-demo-banner .eyebrow,
 .synthetic-demo-banner h2 { color: #6d4600; }
 .synthetic-demo-banner .json-block { background: rgba(255,255,255,.72); }
+}
