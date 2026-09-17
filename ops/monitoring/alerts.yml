@@ -1,0 +1,69 @@
+# Starter alerting rules derived from the metrics that already exist in
+# apps/backend/src/cabqp/shared/{metrics,middleware}.py. Thresholds below are
+# explicit starting points, not production-validated SLOs — they have not
+# been tuned against real traffic and must be revisited once real-world
+# volume/latency data exists, per this project's "never invent unfounded
+# numbers" convention (the same spirit as never inventing salary formulas).
+groups:
+  - name: cabqp-http
+    rules:
+      - alert: CabqpHttp5xxRateHigh
+        expr: |
+          sum(rate(cabqp_http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(cabqp_http_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CA/BQP backend 5xx rate above 5% over 5m"
+          description: "{{ $value | humanizePercentage }} of requests are returning 5xx. Starter threshold — tune against observed baseline."
+
+      - alert: CabqpHttpLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum(rate(cabqp_http_request_duration_seconds_bucket[5m])) by (le))
+          > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CA/BQP backend p95 latency above 3s over 10m"
+          description: "p95 request latency is {{ $value }}s. Starter threshold, matches the smoke k6 script's own gate (ops/loadtest/verify_smoke.js) — retune once real traffic patterns are known."
+
+  - name: cabqp-domain
+    rules:
+      - alert: CabqpPolicyInsufficientDataSpike
+        expr: |
+          sum(rate(cabqp_policy_assessments_total{status="INSUFFICIENT_DATA"}[15m]))
+          /
+          sum(rate(cabqp_policy_assessments_total[15m]))
+          > 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over half of recent policy assessments are INSUFFICIENT_DATA"
+          description: "Per apps/backend/src/cabqp/modules/decisioning/policy.py, this traces to subject_group being null upstream for the current seeded rule set (required_fields is empty on all seeded rules) — investigate the subject_group classifier's input mix, not the policy engine itself, before treating this as a policy-side defect."
+
+      - alert: CabqpOcrQualityGateFailureSpike
+        expr: |
+          sum(rate(cabqp_ocr_quality_total{gate_result="fail"}[15m]))
+          /
+          sum(rate(cabqp_ocr_quality_total[15m]))
+          > 0.3
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OCR quality gate failing on over 30% of recent documents"
+          description: "A sustained spike may indicate a source-image quality regression (blur/contrast) or an EasyOCR/PaddleOCR disagreement pattern — check apps/backend/config/document_quality.yaml's current threshold_version before assuming a code regression."
+
+      # No CabqpReviewQueueBacklogGrowing rule: confirmed by grep that
+      # REVIEW_EVENTS is only ever incremented at cases/service.py:431 with
+      # event="CREATED_OR_UPDATED" — review/service.py's decide_review()
+      # (CONFIRM/UNKNOWN/INSUFFICIENT/DISMISS) never emits a metric at all.
+      # A created-vs-resolved backlog alert is not measurable with the
+      # current instrumentation; adding a metrics.py counter increment to
+      # decide_review() is a real, separate follow-up, not something to
+      # fake here with a rule that can never reflect actual resolution rate.

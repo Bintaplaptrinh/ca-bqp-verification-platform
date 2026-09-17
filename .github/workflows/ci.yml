@@ -1,43 +1,114 @@
 name: CI
 
 on:
-  pull_request:
-    branches: [main, develop]
   push:
-    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  backend:
+  backend-quality:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/backend
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: apps/backend/pyproject.toml
+      - name: Install backend + quality tools
+        run: pip install -e 'apps/backend[dev]'
+      - name: Unit + golden regression suites
+        env:
+          DATABASE_URL: 'sqlite+pysqlite:///:memory:'
+          AUTH_DISABLED: 'true'
+          EMBEDDING_ENABLED: 'false'
+          ANTIMALWARE_ENABLED: 'false'
+          RATE_LIMIT_ENABLED: 'false'
+        run: pytest -q apps/backend/tests --cov=apps/backend/src/cabqp --cov-report=term-missing
+      - name: Ruff
+        run: ruff check apps/backend/src apps/backend/tests apps/backend/scripts
+      - name: MyPy
+        run: mypy apps/backend/src
+      - name: Bandit
+        run: bandit -q -r apps/backend/src -x apps/backend/tests
+      - name: Dependency audit
+        run: pip-audit --strict
 
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Lint
-        run: ruff check .
-
-      - name: Unit test
-        run: pytest
-
-  docker:
+  frontend-react:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install frontend dependencies
+        working-directory: apps/web
+        run: npm install --no-audit --no-fund
+      - name: TypeScript typecheck
+        working-directory: apps/web
+        run: npm run typecheck
+      - name: React production build
+        working-directory: apps/web
+        run: npm run build
+      - name: Validate config JSON artifacts
+        run: python -m json.tool apps/backend/artifacts/resolver_calibration.json >/dev/null
 
-      - name: Docker Compose config check
+  migration-drill:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cabqp
+          POSTGRES_USER: cabqp
+          POSTGRES_PASSWORD: ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cabqp -d cabqp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e apps/backend
+      - name: Upgrade / seed / downgrade / re-upgrade
+        working-directory: apps/backend
+        env:
+          APP_ENV: test
+          DATABASE_URL: 'postgresql+psycopg://cabqp:ci_password@127.0.0.1:5432/cabqp'
+          AUTH_DISABLED: 'true'
+          EMBEDDING_ENABLED: 'false'
+          ANTIMALWARE_ENABLED: 'false'
+          RATE_LIMIT_ENABLED: 'false'
+        run: |
+          alembic upgrade head
+          python scripts/seed.py
+          alembic downgrade base
+          alembic upgrade head
+          python scripts/seed.py
+          alembic current
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose syntax
         run: docker compose config -q
-
-      - name: Docker build
-        run: docker compose build
+      - name: Build backend and frontend images
+        run: |
+          docker build -t cabqp-backend:ci apps/backend
+          docker build -t cabqp-web:ci apps/web
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cabqp-backend:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'

@@ -1,18 +1,40 @@
-# Python
 __pycache__/
 *.pyc
-venv/
-.venv/
-.pytest_cache/
-*.egg-info/
-
-# Environment
 .env
+.env.local
+.env.*.local
+# Local runtime state written by ops/local.py: uploaded originals, service logs
+# and backups. Never source.
+.local/
 
-# OS
-.DS_Store
-Thumbs.db
+# AI assistant context/config (Claude Code project settings, skills, scratch
+# state). Local to each contributor's machine, never project source.
+.claude/
 
-
-.claude-context/
-.github/workflows/ci.yml.proposed
+artifacts/registry/raw/
+artifacts/registry/candidates/
+# artifacts/registry/published/ and artifacts/synthetic/ hold large curated data
+# (~204MB). They are deliberately not committed — a fresh clone rebuilds them
+# with run.py, and seed.py falls back to datasets/curated/ when they are absent.
+artifacts/registry/published/
+artifacts/synthetic/
+*.zip
+*.tar.gz
+.venv/
+venv/
+node_modules/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+dist/
+build/
+*.egg-info/
+celerybeat-schedule*
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/playwright/.cache/
