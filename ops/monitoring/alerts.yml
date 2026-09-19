@@ -57,7 +57,7 @@ groups:
           severity: warning
         annotations:
           summary: "OCR quality gate failing on over 30% of recent documents"
-          description: "A sustained spike may indicate a source-image quality regression (blur/contrast) or an EasyOCR/PaddleOCR disagreement pattern — check apps/backend/config/document_quality.yaml's current threshold_version before assuming a code regression."
+          description: "A sustained spike may indicate a source-image quality regression (blur/contrast) or an EasyOCR/VietOCR disagreement pattern — check apps/backend/config/document_quality.yaml's current threshold_version before assuming a code regression."
 
       # No CabqpReviewQueueBacklogGrowing rule: confirmed by grep that
       # REVIEW_EVENTS is only ever incremented at cases/service.py:431 with

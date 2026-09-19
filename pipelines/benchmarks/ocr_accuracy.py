@@ -34,7 +34,7 @@ def _diacritic_accuracy(ref: str, hyp: str) -> float:
 def run(args) -> dict:
     truth = _records(Path(args.records))
     fixtures = _manifest(Path(args.manifest))
-    configs = [('paddle', 'paddle'), ('paddle', 'vietocr'), ('tesseract', 'tesseract')]
+    configs = [('easyocr', 'easyocr'), ('easyocr', 'vietocr')]
     rows = []
     for detector, recognizer in configs:
         engine = get_engine(detector, recognizer)

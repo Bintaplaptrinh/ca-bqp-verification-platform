@@ -122,14 +122,3 @@ def preprocess_for_deep(image, *, clahe: bool = False):
         lightness=cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(lightness)
         arr=cv2.cvtColor(cv2.merge((lightness,a,b)), cv2.COLOR_LAB2RGB)
     return arr
-
-
-def preprocess_for_tesseract(image):
-    arr=preprocess_for_deep(image)
-    from skimage.filters import threshold_sauvola
-
-    cv2=_cv2()
-    gray=cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-    gray=cv2.fastNlMeansDenoising(gray, None, 8, 7, 21)
-    th=threshold_sauvola(gray, window_size=25, k=0.2)
-    return (gray > th).astype("uint8") * 255

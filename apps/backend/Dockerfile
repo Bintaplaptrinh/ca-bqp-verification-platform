@@ -18,7 +18,7 @@ WORKDIR /app
 # pip resolves a VCS requirement by shelling out to `git clone`. python:3.11-slim
 # ships without it, so the dependency install below fails outright when it is missing.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git libmagic1 libgl1 libglib2.0-0 tesseract-ocr tesseract-ocr-vie fonts-dejavu-core \
+    && apt-get install -y --no-install-recommends git libmagic1 libgl1 libglib2.0-0 fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system cabqp \
     && useradd --system --gid cabqp --home-dir /app --shell /usr/sbin/nologin cabqp
@@ -31,6 +31,11 @@ RUN apt-get update \
 # re-downloading every OCR/embedding model.
 COPY pyproject.toml ./
 COPY scripts/bake_models.py ./scripts/bake_models.py
+# The VietOCR fallback recognizer is vendored rather than installed from PyPI: the
+# published sdist hard-pins pillow==10.2.0, which pdfplumber's Pillow>=12.2 rules out.
+# Installing the checkout with --no-deps takes the code without the pin; its actual
+# runtime requirements are declared in pyproject.toml.
+COPY vendor/vietocr /opt/vietocr
 
 # Build is the only networked model-fetch phase. A failed model bake fails the image build.
 # torch arrives only via sentence-transformers and this service runs inference on CPU
@@ -46,6 +51,7 @@ ENV PIP_DEFAULT_TIMEOUT=180 \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --index-url https://download.pytorch.org/whl/cpu torch \
     && python -c "import tomllib,subprocess,sys; deps=tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; subprocess.check_call([sys.executable,'-m','pip','install',*deps])" \
+    && pip install --no-deps /opt/vietocr \
     && mkdir -p /models \
     && python scripts/bake_models.py
 
@@ -69,9 +75,11 @@ ENV HF_HUB_OFFLINE=1 \
     EASYOCR_DOWNLOAD_ENABLED=false \
     EMBEDDING_LOCAL_FILES_ONLY=true \
     EMBEDDING_MODEL_NAME=/models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
-    VIETOCR_WEIGHTS=/models/vietocr/vgg_transformer.pth
-# VIETOCR_WEIGHTS is only populated when the optional vietocr extra is installed;
-# the default paddle/paddle OCR path never reads it.
+    VIETOCR_WEIGHTS=/models/vietocr/vgg_transformer.pth \
+    VIETOCR_CONFIG_DIR=/opt/vietocr/config \
+    VIETOCR_DOWNLOAD_ENABLED=false
+# The fallback recognizer's checkpoint and YAML configs are baked into the image, so
+# a worker never reaches vocr.vn mid-request.
 
 USER cabqp
 EXPOSE 8000

@@ -28,14 +28,6 @@ easyocr.Reader(
     verbose=False,
 )
 
-# OCR candidate A: Paddle. Instantiation downloads model files into the build-time cache.
-from paddleocr import PaddleOCR
-
-try:
-    PaddleOCR(lang="vi",use_doc_orientation_classify=False,use_doc_unwarping=False,use_textline_orientation=False)
-except TypeError:
-    PaddleOCR(lang="vi",use_angle_cls=False)
-
 # PP-StructureV3 is only called after a cheap ruled-table signal, but its assets must still be available offline.
 from paddleocr import PPStructureV3
 
@@ -47,27 +39,35 @@ from sentence_transformers import SentenceTransformer
 model_name=os.environ.get("EMBEDDING_MODEL_NAME","sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 SentenceTransformer(model_name).save(str(root/"sentence-transformers"/"paraphrase-multilingual-MiniLM-L12-v2"))
 
-# VietOCR is an optional benchmark candidate, not a hard dependency: it hard-pins
-# pillow==10.2.0, which cannot co-exist with pdfplumber's Pillow>=12.2 requirement.
-# When it is deliberately installed (pip install '.[vietocr]') bake its weights too;
-# otherwise skip quietly so the default paddle/paddle image still builds.
-try:
-    import shutil
+# VietOCR: the fallback recognizer run when EasyOCR's mean confidence falls below
+# OCR_FALLBACK_CONFIDENCE_MIN. Both its YAML configs and its checkpoint must be on
+# disk before runtime, which is offline (VIETOCR_DOWNLOAD_ENABLED=false).
+# The application package is not installed yet at this point in the build, so the
+# config/weight resolution is duplicated here deliberately rather than imported from
+# cabqp.modules.document_intelligence.ocr.engines.
+import vietocr
+import yaml
+from vietocr.tool.config import Cfg
+from vietocr.tool.predictor import Predictor
 
-    from vietocr.tool.config import Cfg
-    from vietocr.tool.predictor import Predictor
-    from vietocr.tool.utils import download_weights
-except ImportError:
-    print("vietocr not installed; skipping optional OCR benchmark weights")
-else:
-    cfg=Cfg.load_config_from_name("vgg_transformer")
-    cfg["cnn"]["pretrained"]=False
-    cfg["device"]="cpu"
-    cfg["predictor"]["beamsearch"]=False
-    downloaded=Path(download_weights(cfg["weights"]))
-    viet_dir=root/"vietocr"
-    viet_dir.mkdir(parents=True,exist_ok=True)
-    local_weight=viet_dir/"vgg_transformer.pth"
-    shutil.copy2(downloaded,local_weight)
-    cfg["weights"]=str(local_weight)
-    Predictor(cfg)
+config_dir=Path(os.environ.get("VIETOCR_CONFIG_DIR") or Path(vietocr.__file__).resolve().parent.parent/"config")
+merged: dict={}
+for name in ("base.yml","vgg-transformer.yml"):
+    with (config_dir/name).open(encoding="utf-8") as handle:
+        merged.update(yaml.safe_load(handle))
+cfg=Cfg(merged)
+cfg["cnn"]["pretrained"]=False
+cfg["device"]="cpu"
+cfg["predictor"]["beamsearch"]=False
+viet_dir=root/"vietocr"; viet_dir.mkdir(parents=True,exist_ok=True)
+local_weight=Path(os.environ.get("VIETOCR_WEIGHTS") or viet_dir/"vgg_transformer.pth")
+local_weight.parent.mkdir(parents=True,exist_ok=True)
+import requests
+
+with requests.get(cfg["weights"],stream=True,timeout=300) as response:
+    response.raise_for_status()
+    with local_weight.open("wb") as handle:
+        for chunk in response.iter_content(chunk_size=1<<20):
+            handle.write(chunk)
+cfg["weights"]=str(local_weight)
+Predictor(cfg)

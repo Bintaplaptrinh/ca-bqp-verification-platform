@@ -150,7 +150,7 @@ Artifact calibration: `apps/backend/artifacts/resolver_calibration.json`. Artifa
 Hỗ trợ: PDF, DOCX, XLSX/XLS, PNG/JPG/JPEG, TXT/CSV.
 
 - Structured/text parser trước.
-- OCR pluggable (Paddle detector/recognizer, VietOCR candidate, Tesseract baseline); engine mặc định phải được chốt bằng benchmark, không hardcode theo giả định.
+- OCR: EasyOCR (detector + recognizer) là engine chính; khi confidence trung bình của EasyOCR dưới `OCR_FALLBACK_CONFIDENCE_MIN` (mặc định 0.70), hoặc quality gate fail, hoặc ảnh nguồn kém, hệ thống chạy lại bằng fallback VietOCR (EasyOCR detector + VietOCR recognizer, nguồn vendored tại `apps/backend/vendor/vietocr`). Hệ thống chọn trọn vẹn output của một engine, không ghép ký tự; hai engine đọc lệch trường định danh thì gate fail và confidence = 0. Ngưỡng phải chốt bằng benchmark, không hardcode theo giả định.
 - Magic-byte + MIME validation.
 - Office ZIP path/expanded-size guard.
 - ClamAV scan; production fail-closed.

@@ -8,31 +8,22 @@ from pathlib import Path
 from PIL import Image
 
 from .base import BBox, OcrLine
-from .preprocess import assess_image_quality, preprocess_for_deep, preprocess_for_tesseract
+from .preprocess import assess_image_quality, preprocess_for_deep
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, object] = {}
 
-
-def _paddle():
-    with _LOCK:
-        if 'paddle' not in _CACHE:
-            from paddleocr import PaddleOCR
-            try:  # PaddleOCR 3.x
-                _CACHE['paddle'] = PaddleOCR(
-                    lang='vi',
-                    use_doc_orientation_classify=False,
-                    use_doc_unwarping=False,
-                    use_textline_orientation=False,
-                    # The oneDNN (MKL-DNN) CPU backend's PIR runtime hits
-                    # NotImplementedError: ConvertPirAttribute2RuntimeAttribute on this
-                    # detection model's array-of-double attributes when running on
-                    # Windows; the plain CPU path lacks that unsupported op path.
-                    enable_mkldnn=False,
-                )
-            except TypeError:  # PaddleOCR 2.x compatibility
-                _CACHE['paddle'] = PaddleOCR(use_angle_cls=False, lang='vi', show_log=False)
-    return _CACHE['paddle']
+# The vendored VietOCR checkout (apps/backend/vendor/vietocr) ships the upstream YAML configs.
+# Reading them from disk keeps model construction offline: Cfg.load_config_from_name()
+# fetches both the base and the architecture config over HTTP from vocr.vn, which a
+# worker must never depend on at request time.
+_VIETOCR_CONFIG_NAMES = {
+    'vgg_transformer': 'vgg-transformer.yml',
+    'vgg_seq2seq': 'vgg-seq2seq.yml',
+    'resnet_transformer': 'resnet-transformer.yml',
+    'resnet_fpn_transformer': 'resnet_fpn_transformer.yml',
+    'vgg_convseq2seq': 'vgg-convseq2seq.yml',
+}
 
 
 def _easyocr():
@@ -56,112 +47,99 @@ def _easyocr():
     return _CACHE['easyocr']
 
 
-def _paddle_result(arr) -> tuple[list[BBox], list[str], list[float]]:
-    ocr = _paddle()
-    if hasattr(ocr, 'predict'):
-        results = list(ocr.predict(arr))
-        boxes: list[BBox] = []
-        texts: list[str] = []
-        scores: list[float] = []
-        for result in results:
-            payload = getattr(result, 'json', None)
-            if callable(payload):
-                payload = payload()
-            if payload is None and isinstance(result, dict):
-                payload = result
-            data = (payload or {}).get('res', payload or {})
-            rec_boxes = data.get('rec_boxes', []) or []
-            rec_texts = data.get('rec_texts', []) or []
-            rec_scores = data.get('rec_scores', []) or []
+def _vietocr_config_dir() -> Path:
+    override = os.getenv('VIETOCR_CONFIG_DIR')
+    if override:
+        return Path(override)
+    # <repo>/vendor/vietocr/config, resolved through the installed package so an
+    # editable install from the vendored checkout and a wheel both work.
+    import vietocr
+
+    candidate = Path(vietocr.__file__).resolve().parent.parent / 'config'
+    if candidate.is_dir():
+        return candidate
+    # A non-editable install lands the package in site-packages without the repo's
+    # config/ directory beside it; the deployment then has to point VIETOCR_CONFIG_DIR
+    # at the vendored checkout (the Docker image sets it to /opt/vietocr/config).
+    raise FileNotFoundError(
+        'VietOCR config directory not found; set VIETOCR_CONFIG_DIR to the vendored '
+        'checkout\'s config/ directory (apps/backend/vendor/vietocr/config)'
+    )
+
+
+def _vietocr_predictor():
+    from cabqp.shared.settings import get_settings
+
+    with _LOCK:
+        if 'vietocr' not in _CACHE:
+            import yaml
+            from vietocr.tool.config import Cfg
+            from vietocr.tool.predictor import Predictor
+
+            settings = get_settings()
+            config_dir = _vietocr_config_dir()
+            arch = settings.vietocr_architecture
             try:
-                rec_boxes = rec_boxes.tolist()
-            except AttributeError:
-                pass
-            try:
-                rec_scores = rec_scores.tolist()
-            except AttributeError:
-                pass
-            # strict=True: the three arrays describe the same detections, so a length
-            # mismatch means the engine returned something we do not understand. Silently
-            # truncating to the shortest would drop OCR lines — losing the one carrying a
-            # personal code would remove evidence without any signal.
-            for box, text, conf in zip(rec_boxes, rec_texts, rec_scores, strict=True):
-                boxes.append(tuple(float(v) for v in box[:4]))
-                texts.append(str(text))
-                scores.append(float(conf))
-        return boxes, texts, scores
-
-    result = ocr.ocr(arr, cls=False)
-    boxes, texts, scores = [], [], []
-    for block in result or []:
-        for item in block or []:
-            if len(item) < 2:
-                continue
-            poly = item[0]
-            text, conf = item[1]
-            xs = [float(p[0]) for p in poly]
-            ys = [float(p[1]) for p in poly]
-            boxes.append((min(xs), min(ys), max(xs), max(ys)))
-            texts.append(str(text))
-            scores.append(float(conf))
-    return boxes, texts, scores
+                arch_file = _VIETOCR_CONFIG_NAMES[arch]
+            except KeyError:
+                raise ValueError(f'Unsupported VietOCR architecture: {arch}') from None
+            merged: dict = {}
+            for name in ('base.yml', arch_file):
+                with (config_dir / name).open(encoding='utf-8') as handle:
+                    merged.update(yaml.safe_load(handle))
+            cfg = Cfg(merged)
+            # The vgg backbone's `pretrained` flag pulls torchvision's ImageNet weights
+            # over the network; the recognizer checkpoint below already carries them.
+            cfg['cnn']['pretrained'] = False
+            cfg['device'] = settings.vietocr_device
+            cfg['predictor']['beamsearch'] = settings.vietocr_beamsearch
+            cfg['weights'] = _vietocr_weights(cfg['weights'])
+            _CACHE['vietocr'] = Predictor(cfg)
+    return _CACHE['vietocr']
 
 
-class PaddleDetector:
-    name = 'paddle-det'
+def _vietocr_weights(default_uri: str) -> str:
+    """Resolve the recognizer checkpoint, preferring a baked local file.
 
-    def detect(self, image) -> list[BBox]:
-        arr = preprocess_for_deep(image)
-        boxes, _, _ = _paddle_result(arr)
-        return boxes
-
-
-class PaddleRecognizer:
-    name = 'paddle-rec'
-
-    def recognize(self, image, bboxes: list[BBox], *, page: int = 1) -> list[OcrLine]:
-        # Paddle's public high-level API is joint detect+recognize. For composition tests/experiments,
-        # crop each detector box and use its recognizer output as one atomic line (no char voting).
-        arr = preprocess_for_deep(image)
-        pil = Image.fromarray(arr)
-        out: list[OcrLine] = []
-        for box in bboxes:
-            x0, y0, x1, y1 = (int(max(0, v)) for v in box)
-            if x1 <= x0 or y1 <= y0:
-                continue
-            crop = pil.crop((x0, y0, x1, y1))
-            c_boxes, texts, scores = _paddle_result(preprocess_for_deep(crop))
-            del c_boxes
-            if not texts:
-                continue
-            text = ' '.join(t.strip() for t in texts if t.strip()).strip()
-            conf = min(scores) if scores else 0.0
-            if text:
-                out.append(OcrLine(text, conf, box, page, 'paddle-det/paddle-rec'))
-        return out
+    A worker should never reach vocr.vn mid-request: the Docker image bakes the
+    checkpoint and `VIETOCR_WEIGHTS` points at it. Outside Docker the file is
+    downloaded once into the cache directory and reused.
+    """
+    local = Path(os.getenv('VIETOCR_WEIGHTS') or _vietocr_cache_dir() / 'vgg_transformer.pth')
+    if local.exists():
+        return str(local)
+    if os.getenv('VIETOCR_DOWNLOAD_ENABLED', 'true').casefold() in {'0', 'false', 'no', 'off'}:
+        raise FileNotFoundError(f'VietOCR weights missing and download disabled: {local}')
+    return _download_vietocr_weights(default_uri, local)
 
 
-class PaddleEngine:
-    name = 'paddle-det/paddle-rec'
+def _vietocr_cache_dir() -> Path:
+    base = os.getenv('XDG_CACHE_HOME') or str(Path.home() / '.cache')
+    return Path(base) / 'cabqp' / 'vietocr'
 
-    def run(self, image: Image.Image, *, page: int = 1) -> list[OcrLine]:
-        arr = preprocess_for_deep(image)
-        boxes, texts, scores = _paddle_result(arr)
-        # _paddle_result builds these three lists in lockstep; strict=True keeps a future
-        # change from silently dropping detections instead of failing loudly.
-        return [
-            OcrLine(t, c, b, page, self.name)
-            for b, t, c in zip(boxes, texts, scores, strict=True)
-            if t.strip()
-        ]
+
+def _download_vietocr_weights(uri: str, destination: Path) -> str:
+    import requests
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_suffix(destination.suffix + '.partial')
+    with requests.get(uri, stream=True, timeout=120) as response:
+        response.raise_for_status()
+        with partial.open('wb') as handle:
+            for chunk in response.iter_content(chunk_size=1 << 20):
+                handle.write(chunk)
+    # Rename only once the body is complete, so an interrupted download can never be
+    # picked up as a valid checkpoint on the next run.
+    partial.replace(destination)
+    return str(destination)
 
 
 class EasyOcrEngine:
     """Vietnamese detector/recognizer used as the production primary engine.
 
-    EasyOCR preserves Vietnamese diacritics substantially better than the current
-    Paddle multilingual recognizer on the shipped scans. Low-contrast inputs receive
-    CLAHE, while every input still goes through the shared perspective/deskew stage.
+    EasyOCR preserves Vietnamese diacritics substantially better than a multilingual
+    recognizer on the shipped scans. Low-contrast inputs receive CLAHE, while every
+    input still goes through the shared perspective/deskew stage.
     """
 
     name = 'easyocr/easyocr'
@@ -208,55 +186,50 @@ class EasyOcrEngine:
         return out
 
 
-class TesseractEngine:
-    name = 'tesseract'
+class EasyOcrDetector:
+    """Text detection only (CRAFT), used to feed the VietOCR recognizer.
 
-    def run(self, image: Image.Image, *, page: int = 1) -> list[OcrLine]:
-        import pytesseract
-        from pytesseract import Output
+    VietOCR is a recognizer: it transcribes one cropped text line and has no detector
+    of its own, so the fallback engine reuses EasyOCR's detection stage.
+    """
 
+    name = 'easyocr-det'
+
+    def detect(self, image) -> list[BBox]:
         from cabqp.shared.settings import get_settings
 
-        arr = preprocess_for_tesseract(image)
-        psm = get_settings().tesseract_page_segmentation_mode
-        data = pytesseract.image_to_data(
-            arr,
-            lang='vie',
-            config=f'--oem 1 --psm {psm} -c preserve_interword_spaces=1',
-            output_type=Output.DICT,
+        settings = get_settings()
+        quality = assess_image_quality(image)
+        arr = preprocess_for_deep(
+            image,
+            clahe=quality['contrast_std'] < settings.quality_image_contrast_std_min,
         )
-        out = []
-        for i, text in enumerate(data.get('text', [])):
-            text = (text or '').strip()
-            try:
-                conf = float(data['conf'][i]) / 100.0
-            except (KeyError, TypeError, ValueError):
-                conf = 0.0
-            if not text:
-                continue
-            x, y, w, h = (float(data[k][i]) for k in ('left', 'top', 'width', 'height'))
-            out.append(OcrLine(text, max(0.0, min(1.0, conf)), (x, y, x + w, y + h), page, self.name))
-        return out
+        horizontal, free = _easyocr().detect(
+            arr,
+            text_threshold=settings.easyocr_text_threshold,
+            low_text=settings.easyocr_low_text,
+            link_threshold=settings.easyocr_link_threshold,
+            canvas_size=settings.easyocr_canvas_size,
+            mag_ratio=settings.easyocr_magnification,
+        )
+        boxes: list[BBox] = []
+        for box in (horizontal or [[]])[0] or []:
+            x_min, x_max, y_min, y_max = (float(v) for v in box)
+            boxes.append((x_min, y_min, x_max, y_max))
+        for polygon in (free or [[]])[0] or []:
+            xs = [float(point[0]) for point in polygon]
+            ys = [float(point[1]) for point in polygon]
+            boxes.append((min(xs), min(ys), max(xs), max(ys)))
+        return boxes
 
 
 class VietOcrRecognizer:
+    """VietOCR (pbcquoc/vietocr) transformer recognizer over detected line crops."""
+
     name = 'vietocr-rec'
 
-    def __init__(self):
-        with _LOCK:
-            if 'vietocr' not in _CACHE:
-                from vietocr.tool.config import Cfg
-                from vietocr.tool.predictor import Predictor
-
-                cfg = Cfg.load_config_from_name('vgg_transformer')
-                cfg['cnn']['pretrained'] = False
-                local_weights = Path(os.getenv('VIETOCR_WEIGHTS', '/models/vietocr/vgg_transformer.pth'))
-                if local_weights.exists():
-                    cfg['weights'] = str(local_weights)
-                cfg['device'] = 'cpu'
-                cfg['predictor']['beamsearch'] = False
-                _CACHE['vietocr'] = Predictor(cfg)
-        self.predictor = _CACHE['vietocr']
+    def __init__(self) -> None:
+        self.predictor = _vietocr_predictor()
 
     def recognize_crop(self, crop: Image.Image) -> tuple[str, float]:
         result = self.predictor.predict(crop, return_prob=True)
@@ -274,14 +247,17 @@ class VietOcrRecognizer:
     def recognize(self, image, bboxes: list[BBox], *, page: int = 1) -> list[OcrLine]:
         arr = preprocess_for_deep(image)
         pil = Image.fromarray(arr)
-        out = []
+        width, height = pil.size
+        out: list[OcrLine] = []
         for box in bboxes:
-            x0, y0, x1, y1 = (int(max(0, v)) for v in box)
+            x0, y0, x1, y1 = (int(round(v)) for v in box)
+            x0, y0 = max(0, x0), max(0, y0)
+            x1, y1 = min(width, x1), min(height, y1)
             if x1 <= x0 or y1 <= y0:
                 continue
             text, conf = self.recognize_crop(pil.crop((x0, y0, x1, y1)))
             if text.strip():
-                out.append(OcrLine(text, conf, box, page, f'paddle-det/{self.name}'))
+                out.append(OcrLine(text, conf, box, page, self.name))
         return out
 
 
@@ -299,9 +275,11 @@ class ComposedOcrEngine:
         return lines
 
 
-class PaddleDetectVietOcrEngine(ComposedOcrEngine):
-    def __init__(self):
-        super().__init__(PaddleDetector(), VietOcrRecognizer())
+class EasyDetectVietOcrEngine(ComposedOcrEngine):
+    """The configured fallback: EasyOCR detection + VietOCR recognition."""
+
+    def __init__(self) -> None:
+        super().__init__(EasyOcrDetector(), VietOcrRecognizer())
 
 
 def get_engine(detector: str | None = None, recognizer: str | None = None):
@@ -312,12 +290,8 @@ def get_engine(detector: str | None = None, recognizer: str | None = None):
     recognizer = (recognizer or s.ocr_recognizer).casefold()
     if detector == 'easyocr' and recognizer == 'easyocr':
         return EasyOcrEngine()
-    if detector == 'tesseract' or recognizer == 'tesseract':
-        return TesseractEngine()
-    if detector == 'paddle' and recognizer == 'vietocr':
-        return PaddleDetectVietOcrEngine()
-    if detector == 'paddle' and recognizer == 'paddle':
-        return PaddleEngine()  # optimized joint execution; separate classes remain available for A/B composition
+    if detector == 'easyocr' and recognizer == 'vietocr':
+        return EasyDetectVietOcrEngine()
     raise ValueError(f'Unsupported OCR composition: {detector}/{recognizer}')
 
 

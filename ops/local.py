@@ -98,9 +98,9 @@ def app_env() -> dict:
     lookup: alembic and the seed scripts run with ``apps/backend`` as their
     working directory, where a relative ``.env`` does not resolve.
 
-    ``PATH`` is prefixed with the active interpreter's directory so the OCR
-    binaries installed alongside it (tesseract, poppler) are found without a
-    separate system install.
+    ``PATH`` is prefixed with the active interpreter's directory so the
+    binaries installed alongside it (poppler) are found without a separate
+    system install.
     """
     return {
         **os.environ,
@@ -207,7 +207,6 @@ def ensure_database() -> str:
         "EMBEDDING_ENABLED=true",
         "STORAGE_ROOT=.local/documents",
         "CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000",
-        f"TESSERACT_CMD={Path(sys.executable).parent}/tesseract",
         f"POPPLER_PATH={Path(sys.executable).parent}",
     ]
     # Anything already in the file that this profile does not generate — the

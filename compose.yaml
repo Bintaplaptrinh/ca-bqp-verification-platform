@@ -85,8 +85,9 @@ services:
       REGISTRY_SEED_PATH: ${REGISTRY_SEED_PATH:-/app/registry/master_units_registry.csv}
       OCR_DETECTOR: ${OCR_DETECTOR:-easyocr}
       OCR_RECOGNIZER: ${OCR_RECOGNIZER:-easyocr}
-      OCR_FALLBACK_DETECTOR: ${OCR_FALLBACK_DETECTOR:-paddle}
-      OCR_FALLBACK_RECOGNIZER: ${OCR_FALLBACK_RECOGNIZER:-paddle}
+      OCR_FALLBACK_DETECTOR: ${OCR_FALLBACK_DETECTOR:-easyocr}
+      OCR_FALLBACK_RECOGNIZER: ${OCR_FALLBACK_RECOGNIZER:-vietocr}
+      OCR_FALLBACK_CONFIDENCE_MIN: ${OCR_FALLBACK_CONFIDENCE_MIN:-0.70}
     depends_on:
       postgres:
         condition: service_healthy

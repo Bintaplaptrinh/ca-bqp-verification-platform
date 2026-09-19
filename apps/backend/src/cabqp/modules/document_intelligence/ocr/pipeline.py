@@ -55,16 +55,31 @@ def run_ocr(image: Image.Image, *, page: int = 1, detector: str | None = None, r
     primary = get_engine(detector, recognizer)
     primary_lines = primary.run(image, page=page)
     primary_q = _quality(primary_lines)
+    primary_score = mean([x.conf for x in primary_lines] or [0.0])
+    # A recognizer that is merely unsure does not necessarily fail the quality gate:
+    # short key/value scans produce few enough lines that a weak reading can still
+    # pass every distribution metric. The mean recognition confidence is therefore a
+    # fallback trigger in its own right, alongside a failed gate and a degraded source
+    # image.
+    low_confidence = primary_score < settings.ocr_fallback_confidence_min
     selected_lines = primary_lines
     selected_q = primary_q
     evidence = {
         'primary_engine': primary.name,
+        'primary_confidence': primary_score,
         'fallback_ran': False,
         'critical_disagreement': False,
         'input_image_quality': image_quality,
     }
 
-    if settings.ocr_fallback_enabled and (primary_q.gate_result.value == 'FAIL' or input_quality_low):
+    if settings.ocr_fallback_enabled and (
+        primary_q.gate_result.value == 'FAIL' or input_quality_low or low_confidence
+    ):
+        evidence['fallback_reason'] = (
+            'PRIMARY_GATE_FAILED' if primary_q.gate_result.value == 'FAIL'
+            else 'INPUT_IMAGE_QUALITY_LOW' if input_quality_low
+            else 'PRIMARY_CONFIDENCE_BELOW_THRESHOLD'
+        )
         fallback = get_engine(settings.ocr_fallback_detector, settings.ocr_fallback_recognizer)
         if fallback.name != primary.name:
             try:
@@ -72,6 +87,7 @@ def run_ocr(image: Image.Image, *, page: int = 1, detector: str | None = None, r
                 fallback_lines = fallback.run(image, page=page)
                 fallback_q = _quality(fallback_lines)
                 evidence['fallback_engine'] = fallback.name
+                evidence['fallback_confidence'] = mean([x.conf for x in fallback_lines] or [0.0])
                 primary_signature = _critical_signature(primary_lines)
                 fallback_signature = _critical_signature(fallback_lines)
                 if (primary_signature or fallback_signature) and primary_signature != fallback_signature:

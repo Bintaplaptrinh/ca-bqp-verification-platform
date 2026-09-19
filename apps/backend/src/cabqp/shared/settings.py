@@ -114,9 +114,12 @@ class Settings(BaseSettings):
     # Document intelligence / OCR. Thresholds are configuration, never literals in gate code.
     ocr_detector: str = "easyocr"
     ocr_recognizer: str = "easyocr"
-    ocr_fallback_detector: str = "paddle"
-    ocr_fallback_recognizer: str = "paddle"
+    ocr_fallback_detector: str = "easyocr"
+    ocr_fallback_recognizer: str = "vietocr"
     ocr_fallback_enabled: bool = True
+    # Mean EasyOCR recognition confidence below which the VietOCR fallback is run.
+    # The two outputs are then compared whole; neither is spliced into the other.
+    ocr_fallback_confidence_min: float = 0.70
     easyocr_decoder: str = "greedy"
     easyocr_contrast_threshold: float = 0.10
     easyocr_adjust_contrast: float = 0.50
@@ -126,7 +129,9 @@ class Settings(BaseSettings):
     easyocr_canvas_size: int = 2560
     easyocr_magnification: float = 1.0
     easyocr_result_confidence_min: float = 0.15
-    tesseract_page_segmentation_mode: int = 6
+    vietocr_architecture: str = "vgg_transformer"
+    vietocr_device: str = "cpu"
+    vietocr_beamsearch: bool = False
     quality_conf_p10_min: float = 0.70
     quality_conf_min: float = 0.30
     quality_low_conf_line: float = 0.70

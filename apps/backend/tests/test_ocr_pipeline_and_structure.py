@@ -12,6 +12,7 @@ from PIL import Image
 import cabqp.modules.document_intelligence.ocr.pipeline as pipeline
 from cabqp.modules.document_intelligence.ocr.base import OcrLine
 from cabqp.modules.document_intelligence.table import scan_structure_contains_table
+from cabqp.shared.settings import get_settings
 
 CLEAN_READING = [
     ("Ho va ten: Nguyen Van A", 0.95),
@@ -46,6 +47,22 @@ def engines(monkeypatch):
         monkeypatch.setattr(pipeline, "get_engine", get_engine)
 
     return install
+
+
+@pytest.fixture
+def settings_env(monkeypatch):
+    """Apply environment overrides that Settings actually sees.
+
+    ``get_settings`` is ``lru_cache``d, so setting the variable alone leaves the
+    already-built Settings in place and the override silently does nothing.
+    """
+    def apply(**values: str):
+        for key, value in values.items():
+            monkeypatch.setenv(key, value)
+        get_settings.cache_clear()
+
+    yield apply
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -89,6 +106,45 @@ def test_blurred_input_cannot_report_high_confidence(engines, image, monkeypatch
     assert run.quality["reason"] == "INPUT_IMAGE_QUALITY_LOW"
     assert run.quality["metrics"]["image_blur_variance"]["state"] == "FAIL"
     assert run.confidence <= 0.5
+
+
+def test_low_primary_confidence_triggers_the_fallback(engines, image, monkeypatch, settings_env):
+    """A confident-looking gate pass is not enough: a weak reading must still be re-run.
+
+    A short key/value scan produces few enough lines to pass every distribution metric
+    while the recognizer itself is unsure, so mean recognition confidence is a fallback
+    trigger of its own — that is what the VietOCR fallback exists for.
+    """
+    # Isolate the confidence trigger: a blurred source image would fire the fallback on
+    # its own and the assertion below would prove nothing.
+    monkeypatch.setattr(
+        pipeline,
+        "assess_image_quality",
+        lambda image: {"blur_variance": 5000.0, "contrast_std": 60.0, "skew_angle": 0.0},
+    )
+    settings_env(OCR_FALLBACK_ENABLED="true", OCR_FALLBACK_CONFIDENCE_MIN="0.99")
+    engines(CLEAN_READING, CLEAN_READING)
+
+    run = pipeline.run_ocr(image)
+
+    assert run.evidence["fallback_ran"] is True
+    assert run.evidence["fallback_reason"] == "PRIMARY_CONFIDENCE_BELOW_THRESHOLD"
+    assert run.quality["gate_result"] == "PASS"
+
+
+def test_confident_primary_reading_does_not_run_the_fallback(engines, image, monkeypatch, settings_env):
+    monkeypatch.setattr(
+        pipeline,
+        "assess_image_quality",
+        lambda image: {"blur_variance": 5000.0, "contrast_std": 60.0, "skew_angle": 0.0},
+    )
+    settings_env(OCR_FALLBACK_ENABLED="true", OCR_FALLBACK_CONFIDENCE_MIN="0.70")
+    engines(CLEAN_READING, UNREADABLE)
+
+    run = pipeline.run_ocr(image)
+
+    assert run.evidence["fallback_ran"] is False
+    assert run.evidence["selected_engine"] == "primary"
 
 
 def test_structure_error_is_not_reported_as_a_table():
