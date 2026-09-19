@@ -12,6 +12,7 @@ import {
   Eye,
   RotateCcw,
 } from '../icons/index.jsx';
+import NotificationModal from './NotificationModal.jsx';
 
 export default function OcrResultModal({
   isOpen,
@@ -410,6 +411,7 @@ function BulkResultModal({ file, data, onClose, onConfirm, onViewResults }) {
   const [mapping, setMapping] = useState(data.mapping || {});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [showDuplicateNotice, setShowDuplicateNotice] = useState(Boolean(data.duplicateFile));
   const headers = data.profile?.headers || Object.keys(mapping);
   const details = data.profile?.mapping_details || {};
   const validation = data.validation || {};
@@ -439,6 +441,23 @@ function BulkResultModal({ file, data, onClose, onConfirm, onViewResults }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+      <NotificationModal
+        open={showDuplicateNotice}
+        title="Tệp đã được xử lý"
+        message={`Tệp này đã được nhập trước đó. Hệ thống sẽ hiển thị lần xử lý hiện có: ${statusLabel}.`}
+        primaryLabel="Xem kết quả"
+        onPrimary={() => {
+          setShowDuplicateNotice(false);
+          onViewResults?.(data.jobId);
+        }}
+        onClose={() => setShowDuplicateNotice(false)}
+      />
+      <NotificationModal
+        open={Boolean(submitError)}
+        title="Không thể xử lý danh sách"
+        message={submitError}
+        onClose={() => setSubmitError('')}
+      />
       <div className="relative w-full max-w-5xl bg-white rounded-md shadow-2xl border border-slate-200 overflow-hidden my-4 max-h-[94vh] flex flex-col">
         <div className="px-5 py-4 bg-white text-slate-900 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
@@ -465,12 +484,6 @@ function BulkResultModal({ file, data, onClose, onConfirm, onViewResults }) {
               </div>
             ))}
           </div>
-
-          {data.duplicateFile && (
-            <div className="p-3 rounded-md bg-[#FDF0BE] border border-amber-200 text-sm text-amber-800">
-              Tệp này đã được nhập trước đó. Đang hiển thị lần xử lý hiện có: <strong>{statusLabel}</strong>.
-            </div>
-          )}
 
           {data.errors?.length > 0 && (
             <div className="bg-red-50 border border-red-200 rounded-md p-4">
@@ -548,7 +561,6 @@ function BulkResultModal({ file, data, onClose, onConfirm, onViewResults }) {
             </div>
           )}
 
-          {submitError && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3">{submitError}</div>}
         </div>
 
         <div className="px-5 py-4 bg-white border-t border-slate-200 flex justify-between gap-3">

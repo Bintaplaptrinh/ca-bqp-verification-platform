@@ -12,8 +12,22 @@ from cabqp.modules.person_resolution.service import PersonResolution, PersonReso
 from cabqp.modules.resolution.service import Resolution, Resolver
 from cabqp.modules.subject_group.service import classify_subject_group
 from cabqp.shared.metrics import CASE_TRANSITIONS, RESOLUTION_RESULTS, REVIEW_EVENTS
-from cabqp.shared.models import Case, ExtractedRecord, ReviewCase, VerificationResult
+from cabqp.shared.models import Case, Document, ExtractedRecord, ReviewCase, VerificationResult
 from cabqp.shared.settings import get_settings
+
+
+def _source_document_id(db: Session, case: Case) -> str | None:
+    """Identify which Document this extraction came from, when that is unambiguous.
+
+    ``Document.case_id`` is not schema-unique, so a Case could in principle hold
+    more than one. Trace it only when exactly one exists; guessing which of several
+    produced a field would be evidence the platform cannot stand behind. Text cases
+    have no document at all and keep ``None``.
+    """
+    document_ids = list(
+        db.scalars(select(Document.id).where(Document.case_id == case.id).limit(2))
+    )
+    return document_ids[0] if len(document_ids) == 1 else None
 
 
 def _upsert_extracted_record(db: Session, case: Case, ex, structured: dict) -> ExtractedRecord:
@@ -21,6 +35,9 @@ def _upsert_extracted_record(db: Session, case: Case, ex, structured: dict) -> E
     if rec is None:
         rec = ExtractedRecord(case_id=case.id)
         db.add(rec)
+    # Document -> Extraction traceability. The column and the API projection both
+    # existed but nothing ever wrote it, so every record reported a null source.
+    rec.document_id = _source_document_id(db, case) or rec.document_id
     rec.subject_name = ex.subject_name
     rec.subject_code = ex.subject_code
     rec.position = ex.position
@@ -140,6 +157,16 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
     unit_code = structured.get("unit_code") or ex.unit_code
     person_resolution: PersonResolution | None = None
     person_lookup = bool((ex.subject_name or ex.subject_code) and not ex.current_unit and not unit_code)
+    # A unit code is the same fact CURRENT_WORK_UNIT carries, expressed as an
+    # identifier instead of a name. The document therefore has no free-text unit
+    # relation to score, exactly as a bare-name lookup has none, and the generic
+    # four-field completeness score must not penalize the missing `current_unit`.
+    # Whether the code actually resolves stays a separate gate below (`r.status`),
+    # so this never turns an unresolvable code into a decision.
+    unit_code_lookup = bool(unit_code and not ex.current_unit)
+    # Both shapes supply identity/unit evidence directly rather than through a
+    # narrative relation, and share the same confidence treatment.
+    relationless_lookup = person_lookup or unit_code_lookup
     if person_lookup:
         raw_birth_year = business_fields.get("birth_year")
         try:
@@ -224,11 +251,11 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
 
     resolution_conf = r.decision_confidence if r.decision_confidence is not None else 0.0
     field_confidence = ex.fields.get("field_confidence") or {}
-    # Extraction completeness is workflow-specific. A deliberate bare-name lookup does
-    # not claim to provide position/current-unit, so the generic four-field document
-    # completeness score must not penalize it. The identity field actually supplied is
-    # the extraction gate for this audited lookup path.
-    if person_lookup:
+    # Extraction completeness is workflow-specific. A deliberate bare-name or unit-code
+    # lookup does not claim to provide position/current-unit, so the generic four-field
+    # document completeness score must not penalize it. The identity field actually
+    # supplied is the extraction gate for these audited lookup paths.
+    if relationless_lookup:
         identity_scores = [
             float(field_confidence[key])
             for key in ("subject_name", "subject_code")
@@ -238,10 +265,10 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
     else:
         decision_extraction_confidence = ex.extraction_confidence
     confidence_inputs: list[float | None] = [decision_extraction_confidence, resolution_conf]
-    # Bare-name lookup intentionally has no CURRENT_WORK_UNIT relation in the input; the
-    # unit is obtained from the resolved roster FK. Do not punish that valid path with
-    # relation_confidence=0.
-    if not person_lookup:
+    # A bare-name lookup takes its unit from the resolved roster FK, and a unit-code
+    # lookup states the unit outright. Neither has a CURRENT_WORK_UNIT relation in the
+    # input, so do not punish these valid paths with relation_confidence=0.
+    if not relationless_lookup:
         confidence_inputs.append(ex.relation_confidence)
     if person_resolution is not None:
         confidence_inputs.append(person_resolution.decision_confidence)
@@ -318,7 +345,7 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
         or r.organization_type == "UNKNOWN"
         or (person_resolution is not None and person_resolution.status != "MATCHED")
         or extraction_quality_low
-        or (not person_lookup and ex.relation_confidence < 0.7)
+        or (not relationless_lookup and ex.relation_confidence < 0.7)
         or sg is None
         or parse_quality_low
         or bool(batch_warnings)
@@ -379,7 +406,10 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
             reason = "DOCUMENT_PARSE_LOW_CONFIDENCE"
         elif extraction_quality_low:
             reason = "DOCUMENT_EXTRACTION_LOW_CONFIDENCE"
-        elif not person_lookup and ex.relation_confidence < 0.7:
+        elif not relationless_lookup and ex.relation_confidence < 0.7:
+            # Must stay the same predicate as the gate above: reporting an uncertain
+            # work unit for a Case that was never routed to review on that ground
+            # points the reviewer at the wrong fact.
             reason = "CURRENT_WORK_UNIT_UNCERTAIN"
         elif sg is None:
             reason = "SUBJECT_GROUP_INSUFFICIENT"

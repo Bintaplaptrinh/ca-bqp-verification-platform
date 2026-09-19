@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { CheckCircle2, HelpCircle, RefreshCw, Loader2, UserCheck, UserMinus, Users, ChevronDown, ChevronUp, ListChecks } from '../../icons/index.jsx';
 import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
+import NotificationModal from '../NotificationModal.jsx';
 
 const STATUS_TABS = [
   { value: 'OPEN', label: 'Đang mở' },
@@ -265,7 +266,7 @@ function DecisionForm({ item, apiBaseUrl, onDone, onConflict }) {
 
   return (
     <div className="mt-3 pt-3 border-t border-slate-100 space-y-2.5">
-      {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">{String(error)}</div>}
+      <NotificationModal open={Boolean(error)} title="Không thể ghi quyết định" message={error} onClose={() => setError(null)} />
       <div className="flex flex-wrap gap-2">
         {['CONFIRM', 'UNKNOWN', 'INSUFFICIENT', 'DISMISS'].map((d) => (
           <button
@@ -381,7 +382,7 @@ function ReassignForm({ item, apiBaseUrl, isAdmin, currentUsername, onDone, onCo
           </button>
         </div>
       )}
-      {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-2.5 py-1">{String(error)}</div>}
+      <NotificationModal open={Boolean(error)} title="Không thể phân công xử lý" message={error} onClose={() => setError(null)} />
     </div>
   );
 }
@@ -650,7 +651,7 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
           Xem thông tin hồ sơ mới nhất
         </button>
       )}
-      {error && <div className="text-red-600 bg-red-50 border border-red-200 rounded-md px-2.5 py-1">{String(error)}</div>}
+      <NotificationModal open={Boolean(error)} title="Không thể tải hồ sơ" message={error} onClose={() => setError(null)} />
       {full && (
         <div className="border border-red-200 bg-red-50/40 rounded-md p-2.5 space-y-1.5">
           <p className="font-semibold text-red-800">Thông tin mới nhất, có thể khác dữ liệu ban đầu nếu hồ sơ đã được xử lý lại</p>
@@ -724,12 +725,13 @@ export function ReviewsPage({ apiBaseUrl, user }) {
           }
         />
 
-        {conflictBanner && (
-          <div className="flex items-center justify-between text-sm text-amber-800 bg-[#FDF0BE] border border-amber-200 rounded-md px-4 py-3 mb-4">
-            <span>Hồ sơ đã được người khác cập nhật. Dữ liệu mới nhất đã được tải lại. Vui lòng kiểm tra lại trước khi thao tác tiếp.</span>
-            <button onClick={() => setConflictBanner(false)} className="text-amber-600 hover:text-amber-800 font-semibold ml-3 flex-shrink-0">Đóng</button>
-          </div>
-        )}
+        <NotificationModal
+          open={conflictBanner}
+          title="Hồ sơ đã được xử lý"
+          message="Hồ sơ đã được người khác cập nhật. Dữ liệu mới nhất đã được tải lại. Vui lòng kiểm tra lại trước khi thao tác tiếp."
+          tone="warning"
+          onClose={() => setConflictBanner(false)}
+        />
 
         <div className="flex gap-1.5 mb-4">
           {STATUS_TABS.map((t) => (
@@ -745,7 +747,7 @@ export function ReviewsPage({ apiBaseUrl, user }) {
           ))}
         </div>
 
-        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{String(error)}</div>}
+        <NotificationModal open={Boolean(error)} title="Không thể tải hàng đợi" message={error} onClose={() => setError(null)} />
 
         {loading ? (
           <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center">

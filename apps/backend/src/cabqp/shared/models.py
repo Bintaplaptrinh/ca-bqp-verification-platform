@@ -780,14 +780,26 @@ class AppUser(Base):
     username: Mapped[str] = mapped_column(String(64), primary_key=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(255))
-    personal_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    #: Unique across accounts: one personal code identifies one officer, so two
+    #: accounts holding the same one would make the audit trail ambiguous.
+    #: Stored upper-cased (``auth.service.normalize_personal_code``) so the
+    #: index is case-insensitive without a database-specific collation.
+    personal_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, unique=True
+    )
     birth_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     position: Mapped[str | None] = mapped_column(String(255), nullable=True)
     department: Mapped[str | None] = mapped_column(String(255), nullable=True)
     unit_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
     rank: Mapped[str | None] = mapped_column(String(120), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Unique across accounts: the issued password and every one-time sign-in
+    #: code are delivered here, so a shared mailbox would let its holder sign
+    #: in as either account. Stored lower-cased
+    #: (``auth.service.normalize_email``).
+    email: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True, unique=True
+    )
     permissions: Mapped[list] = mapped_column(JSON, default=list)
     coverage_groups: Mapped[list] = mapped_column(JSON, default=list)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

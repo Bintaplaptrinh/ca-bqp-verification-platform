@@ -162,6 +162,84 @@ def allocate_username(db: Session, base: str) -> str:
     raise ValueError("Không thể cấp phát tên đăng nhập; vui lòng nhập thủ công")
 
 
+# --- Identity uniqueness -----------------------------------------------------
+#
+# An address and a personal code each identify one officer, so two accounts must
+# not share either. The address is what an issued password and every one-time
+# sign-in code are delivered to: two accounts on one mailbox means whoever holds
+# it can sign in as either, and an OTP arriving there is ambiguous. The personal
+# code is the key a reviewer uses to tie an account back to a person, and a
+# duplicate makes the audit trail unreadable.
+#
+# Both are compared on a normalized form so `A@X.VN` does not slip past `a@x.vn`.
+# The normalized form is also what gets stored, which is what lets the unique
+# indexes added in migration 0008 enforce the same rule in the database: the
+# check below is the one that produces a readable message, the index is the
+# backstop for a concurrent insert that passes the check and commits second.
+
+
+class IdentityConflictError(ValueError):
+    """An address or personal code another account already holds.
+
+    A subclass of ValueError so the existing ``except ValueError`` paths keep
+    reporting it as a bad request; the routes that care answer 409 instead.
+    """
+
+
+def normalize_email(value: str | None) -> str | None:
+    """Trim and lower-case an address, or return None for a blank one."""
+    normalized = (value or "").strip().lower()
+    return normalized or None
+
+
+def normalize_personal_code(value: str | None) -> str | None:
+    """Trim a personal code and upper-case it; blank becomes None.
+
+    Upper-casing is safe for the codes this field actually holds (digits, or
+    digits with a letter prefix) and is what makes the unique index
+    case-insensitive without depending on a database-specific collation.
+    """
+    normalized = (value or "").strip().upper()
+    return normalized or None
+
+
+def ensure_identity_available(
+    db: Session,
+    *,
+    email: str | None = None,
+    personal_code: str | None = None,
+    exclude_username: str | None = None,
+) -> None:
+    """Refuse an address or personal code another account already holds.
+
+    ``exclude_username`` is the account being edited, so re-saving its own
+    values is not a conflict. Raises ``ValueError`` with the message the
+    administrator sees.
+    """
+    if email:
+        holder = db.scalar(
+            select(AppUser.username)
+            .where(AppUser.email == email)
+            .where(AppUser.username != (exclude_username or ""))
+        )
+        if holder:
+            raise IdentityConflictError(
+                f"Thư điện tử '{email}' đã được cấp cho tài khoản '{holder}'. "
+                "Mỗi cán bộ dùng một hộp thư riêng."
+            )
+    if personal_code:
+        holder = db.scalar(
+            select(AppUser.username)
+            .where(AppUser.personal_code == personal_code)
+            .where(AppUser.username != (exclude_username or ""))
+        )
+        if holder:
+            raise IdentityConflictError(
+                f"Mã số cán bộ '{personal_code}' đã được cấp cho tài khoản '{holder}'. "
+                "Mỗi cán bộ chỉ có một tài khoản."
+            )
+
+
 # --- Accounts ----------------------------------------------------------------
 
 
@@ -203,6 +281,10 @@ def create_user(
     if require_email and not is_valid_email(email):
         raise ValueError("Thư điện tử không hợp lệ hoặc chưa được nhập")
 
+    email = normalize_email(email)
+    personal_code = normalize_personal_code(personal_code)
+    ensure_identity_available(db, email=email, personal_code=personal_code)
+
     plaintext = password or generate_password()
     if enforce_password_policy and len(plaintext) < MIN_PASSWORD_LENGTH:
         raise ValueError(f"Mật khẩu phải có ít nhất {MIN_PASSWORD_LENGTH} ký tự")
@@ -213,14 +295,14 @@ def create_user(
         username=username,
         password_hash=hash_password(plaintext),
         display_name=display_name.strip(),
-        personal_code=(personal_code or None),
+        personal_code=personal_code,
         birth_year=birth_year,
         position=(position or None),
         department=(department or None),
         unit_name=(unit_name or None),
         rank=(rank or None),
         phone=(phone or None),
-        email=((email or "").strip() or None),
+        email=email,
         permissions=(
             sorted(perms.ALL_PERMISSIONS)
             if is_admin

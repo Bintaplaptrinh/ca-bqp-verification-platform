@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from io import BytesIO
 
+import pytest
 from PIL import Image
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -12,13 +13,17 @@ from cabqp.modules.cases.service import process_case
 from cabqp.modules.decisioning.policy import PolicyEngine
 from cabqp.modules.document_intelligence.extraction import extract
 from cabqp.modules.document_intelligence.file_validation import validate_upload
+from cabqp.modules.document_intelligence.limits import DocumentLimitError
 from cabqp.modules.document_intelligence.parsers import parse_bytes
+from cabqp.modules.document_intelligence.router import route_input
 from cabqp.modules.document_intelligence.subject_split import detect_subject_blocks
 from cabqp.modules.resolution.service import Resolver
 from cabqp.shared.db import Base
 from cabqp.shared.models import (
     Case,
+    Document,
     EligibilityAssessment,
+    ExtractedRecord,
     PolicyRule,
     ReviewCase,
     Source,
@@ -417,3 +422,129 @@ def test_golden_multi_subject_ocr_document_abstains_instead_of_guessing():
     review = db.scalar(select(ReviewCase).where(ReviewCase.case_id == case.id))
     assert review is not None
     assert review.reason == "MULTIPLE_SUBJECTS_OCR_UNSUPPORTED"
+
+
+def test_golden_context_labelled_former_unit_is_not_the_current_unit():
+    """GOLDEN-CONTEXT: "Đơn vị công tác cũ" is a historical label, not CURRENT_WORK_UNIT.
+
+    Label matching is fuzzy (ratio >= 75) because scans garble labels, and that made
+    "Đơn vị công tác cũ" score ~91 against the "đơn vị công tác" alias. It was read as
+    the current unit, and because the current-unit branch only runs when nothing was
+    found, the real "Hiện đang công tác tại ..." clause was then dropped entirely —
+    the document's actual CURRENT_WORK_UNIT never reached resolution at all.
+    """
+    text = (
+        "Họ và tên: Nguyễn Văn A\n"
+        "Đơn vị công tác cũ: Công an tỉnh An Giang\n"
+        "Hiện đang công tác tại Cục Cảnh sát giao thông"
+    )
+    ex = extract(text, {})
+    assert ex.current_unit == "Cục Cảnh sát giao thông"
+    assert "Công an tỉnh An Giang" in ex.former_units
+    assert "Công an tỉnh An Giang" != ex.current_unit
+
+    # The unqualified label must keep winning its own exact match.
+    plain = extract("Họ và tên: Nguyễn Văn A\nĐơn vị công tác: Cục Cảnh sát giao thông", {})
+    assert plain.current_unit == "Cục Cảnh sát giao thông"
+    assert plain.former_units == []
+
+
+def test_golden_noisy_former_unit_stops_at_the_current_marker():
+    """GOLDEN-NOISY: a lost sentence break must not merge two units into one value.
+
+    `_clean_unit` cuts on punctuation only, so an OCR pass that dropped the full stop
+    produced former_units=["Cục A hiện đang công tác tại Cục B"] — a string that
+    resolves to nothing and hides both real units. The marker itself survives OCR, so
+    it is the boundary.
+    """
+    text = "Đồng chí Nguyễn Văn A trước đây công tác tại Công an tỉnh An Giang hiện đang công tác tại Cục Cảnh sát giao thông"
+    ex = extract(text, {})
+    assert ex.current_unit == "Cục Cảnh sát giao thông"
+    assert ex.former_units == ["Công an tỉnh An Giang"]
+
+
+def test_golden_clean_trusted_unit_code_is_unit_evidence_not_a_missing_relation():
+    """GOLDEN-CLEAN: a trusted unit code states CURRENT_WORK_UNIT; it is not an absent one.
+
+    A form carrying a name plus a registry code resolved MATCHED/TRUSTED_CODE, yet the
+    Case was forced to review twice over: relation_confidence was 0 (there is no
+    narrative relation to score) and the four-field completeness score was docked for
+    the missing `current_unit` it had deliberately not been given. Both gates now see
+    the code for what it is, exactly as the bare-name lookup path already did.
+    """
+    db = db_session()
+    seed_unit(db, uid="u_c08", name="Cục Cảnh sát giao thông", org="BCA", code="C08")
+    seed_policy(db)
+    structured = {
+        "subject_name": "Nguyễn Văn A",
+        "unit_code": "C08",
+        "business_fields": {"subject_group": "CAND", "employment_status": "ACTIVE"},
+    }
+    case = Case(created_by="golden", input_type="FORM", raw_text="", input_payload=structured)
+    db.add(case)
+    db.flush()
+    result = process_case(db, case, structured)
+
+    assert result.resolution_status == "MATCHED"
+    assert result.match_method == "TRUSTED_CODE"
+    assert result.organization_type == "BCA"
+    assert result.decision_confidence > 0.9
+    assert case.workflow_status == "COMPLETED"
+    assert db.scalar(select(ReviewCase).where(ReviewCase.case_id == case.id)) is None
+
+
+def test_golden_unknown_unit_code_still_abstains():
+    """The counterpart gate: relaxing the relation check must not rescue a bad code."""
+    db = db_session()
+    seed_unit(db, uid="u_c08", name="Cục Cảnh sát giao thông", org="BCA", code="C08")
+    structured = {"subject_name": "Nguyễn Văn A", "unit_code": "ZZ-404"}
+    case = Case(created_by="golden", input_type="FORM", raw_text="", input_payload=structured)
+    db.add(case)
+    db.flush()
+    result = process_case(db, case, structured)
+
+    assert result.resolution_status == "NOT_FOUND"
+    assert result.organization_type == "UNKNOWN"
+    assert case.workflow_status == "NEED_REVIEW"
+
+
+def test_golden_extracted_record_traces_its_source_document():
+    """Document -> Extraction traceability: the column existed but nothing wrote it."""
+    db = db_session()
+    seed_unit(db, uid="u_c08", name="Cục Cảnh sát giao thông", org="BCA", code="C08")
+    case = Case(created_by="golden", input_type="FILE", raw_text="", input_payload={})
+    db.add(case)
+    db.flush()
+    document = Document(
+        case_id=case.id,
+        file_name="ho-so.pdf",
+        mime_type="application/pdf",
+        size_bytes=1024,
+        checksum="a" * 64,
+        storage_uri="file:///tmp/ho-so.pdf",
+        parse_status="PARSED",
+    )
+    db.add(document)
+    db.flush()
+
+    structured = {"subject_name": "Nguyễn Văn A", "unit_code": "C08"}
+    process_case(db, case, structured)
+    record = db.scalar(select(ExtractedRecord).where(ExtractedRecord.case_id == case.id))
+    assert record is not None
+    assert record.document_id == document.id
+
+
+def test_golden_corrupt_pdf_is_refused_instead_of_routed_to_ocr():
+    """A file that only starts with "%PDF-" is not a scan; it is not a document at all.
+
+    Magic-byte validation passes on the header alone, and the router used to answer
+    PDF_SCAN whenever PyMuPDF could not open the file. Every scan path rasterizes
+    through that same library, so the document could never be read — the failure just
+    moved into OCR and was reported as an OCR problem.
+    """
+    corrupt = b"%PDF-1.4\nthis is not actually a pdf\n" + b"x" * 256
+    # The upload gate still lets it through: that is the gap this closes.
+    assert validate_upload("broken.pdf", corrupt)[1] == "application/pdf"
+    with pytest.raises(DocumentLimitError) as caught:
+        route_input("broken.pdf", corrupt)
+    assert caught.value.code == "INVALID_PDF_DOCUMENT"

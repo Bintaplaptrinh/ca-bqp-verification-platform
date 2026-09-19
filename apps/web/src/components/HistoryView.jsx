@@ -5,17 +5,27 @@ import PageHeader from './layout/PageHeader.jsx';
 const RESULT_STATUS_STYLES = {
   VERIFIED: { bar: 'bg-emerald-600', text: 'text-emerald-800' },
   NEED_REVIEW: { bar: 'bg-amber-600', text: 'text-amber-800' },
+  // A resolved unit outside BCA/BQP is a conclusion with evidence behind it, so it
+  // reads differently from a Case that reached none. NOT_FOUND != OTHER.
+  OUT_OF_SCOPE: { bar: 'bg-slate-500', text: 'text-slate-700' },
   NO_CONCLUSION: { bar: 'bg-slate-400', text: 'text-slate-600' },
 };
+
+const VERIFIED_ORG_LABELS = { BCA: 'BCA', BQP: 'BQP' };
 
 function ResultStatus({ item }) {
   const key = RESULT_STATUS_STYLES[item.statusCategory] ? item.statusCategory : 'NO_CONCLUSION';
   const style = RESULT_STATUS_STYLES[key];
+  // Name the ministry from the decision. A two-way "BQP or else BCA" test would
+  // print a ministry for any other value that ever reached this branch.
+  const orgLabel = VERIFIED_ORG_LABELS[item.orgType];
   const label =
     key === 'VERIFIED'
-      ? `${item.orgType === 'BQP' ? 'BQP' : 'BCA'} - Đã xác định`
+      ? `${orgLabel ? `${orgLabel} - ` : ''}Đã xác định`
       : key === 'NEED_REVIEW'
       ? 'Cần xác minh thêm'
+      : key === 'OUT_OF_SCOPE'
+      ? 'Ngoài phạm vi CA/BQP'
       : 'Chưa có kết luận';
   return (
     <span className={`inline-flex items-center gap-2 text-[12.5px] font-semibold ${style.text}`}>
@@ -42,6 +52,7 @@ function SubjectFacts({ item }) {
 
 export default function HistoryView({
   historyList,
+  totals,
   onSelectCase,
   onViewOriginalDossier,
   onViewDetailedCompare,
@@ -74,10 +85,21 @@ export default function HistoryView({
     return matchesSearch && item.statusCategory === statusFilter;
   });
 
-  const totalCount = historyList.length;
-  const verifiedCount = historyList.filter((i) => i.statusCategory === 'VERIFIED').length;
-  const reviewCount = historyList.filter((i) => i.statusCategory === 'NEED_REVIEW').length;
-  const noConclusionCount = historyList.filter((i) => i.statusCategory === 'NO_CONCLUSION').length;
+  // `totals` is counted by the server over the whole queue. `historyList` is one
+  // page of at most 200 rows, so counting it reported a flat 200 once the queue
+  // grew past that. Fall back to the loaded rows only when the server did not
+  // send totals (the offline / localStorage path), where they are all there is.
+  const loadedCount = historyList.length;
+  const totalCount = totals?.all ?? loadedCount;
+  const verifiedCount =
+    totals?.verified ?? historyList.filter((i) => i.statusCategory === 'VERIFIED').length;
+  const reviewCount =
+    totals?.need_review ?? historyList.filter((i) => i.statusCategory === 'NEED_REVIEW').length;
+  const outOfScopeCount =
+    totals?.out_of_scope ?? historyList.filter((i) => i.statusCategory === 'OUT_OF_SCOPE').length;
+  const noConclusionCount =
+    totals?.no_conclusion ?? historyList.filter((i) => i.statusCategory === 'NO_CONCLUSION').length;
+  const hasUnloadedRows = totalCount > loadedCount;
 
   return (
     <div className="max-w-[1480px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-3 h-full flex-1 flex flex-col overflow-hidden min-h-0">
@@ -113,11 +135,12 @@ export default function HistoryView({
       />
 
       {/* Summary counts */}
-      <div className="flex-shrink-0 grid grid-cols-2 lg:grid-cols-4 bg-white border border-slate-200 rounded-md divide-x divide-slate-200 my-2">
+      <div className="flex-shrink-0 grid grid-cols-2 lg:grid-cols-5 bg-white border border-slate-200 rounded-md divide-x divide-slate-200 my-2">
         {[
           { label: 'Tổng lượt tra cứu', value: totalCount },
           { label: 'Đã xác định (BCA/BQP)', value: verifiedCount },
           { label: 'Cần xác minh thêm', value: reviewCount },
+          { label: 'Ngoài phạm vi CA/BQP', value: outOfScopeCount },
           { label: 'Chưa có kết luận', value: noConclusionCount },
         ].map((stat) => (
           <div key={stat.label} className="px-3.5 py-2.5">
@@ -150,6 +173,7 @@ export default function HistoryView({
             { id: 'ALL', label: 'Tất cả' },
             { id: 'VERIFIED', label: 'Đã xác định' },
             { id: 'NEED_REVIEW', label: 'Cần xác minh' },
+            { id: 'OUT_OF_SCOPE', label: 'Ngoài phạm vi' },
             { id: 'NO_CONCLUSION', label: 'Chưa có kết luận' },
           ].map((tab) => (
             <button
@@ -320,7 +344,13 @@ export default function HistoryView({
         {filteredHistory.length > 0 && (
           <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-[12.5px] text-slate-500">
             <div>
-              Hiển thị <strong>{filteredHistory.length}</strong> trên tổng số <strong>{historyList.length}</strong> hồ sơ đã tra cứu.
+              Hiển thị <strong>{filteredHistory.length}</strong> trên <strong>{loadedCount}</strong> hồ sơ đã tải
+              {hasUnloadedRows ? (
+                <>
+                  , tổng số <strong>{totalCount}</strong> hồ sơ trong hệ thống
+                </>
+              ) : null}
+              .
             </div>
 
           </div>

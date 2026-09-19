@@ -58,6 +58,20 @@ LABELS = {
     "subject_code": ["cccd", "cmnd", "số hiệu", "so hieu", "mã cá nhân", "ma ca nhan"],
     "position": ["chức vụ", "chuc vu", "cấp bậc", "cap bac"],
     "unit_name": ["đơn vị công tác", "don vi cong tac", "cơ quan công tác", "co quan cong tac"],
+    # A historical-unit label must be recognized in its own right. It is listed after
+    # "unit_name" so an exact current-unit label still wins the equal-score tie, but a
+    # qualifier such as "cũ" / "trước đây" scores 100 here against ~91 there and is no
+    # longer read as CURRENT_WORK_UNIT — the invariant a fuzzy threshold of 75 broke.
+    "former_unit_name": [
+        "đơn vị công tác cũ",
+        "don vi cong tac cu",
+        "đơn vị công tác trước đây",
+        "don vi cong tac truoc day",
+        "cơ quan công tác cũ",
+        "co quan cong tac cu",
+        "nguyên đơn vị công tác",
+        "nguyen don vi cong tac",
+    ],
     "subject_group": ["nhóm đối tượng", "nhom doi tuong"],
 }
 
@@ -176,6 +190,40 @@ def label_values(text: str) -> dict[str, str]:
 def _clean_unit(v: str) -> str:
     v = re.split(r"[.;\n]", v)[0]
     return re.sub(r"\s+", " ", v).strip(" ,:-")[:500]
+
+
+def _cut_at_markers(value: str, markers: list[str]) -> str:
+    """Stop a narrative unit value at the next employment-history marker.
+
+    ``_clean_unit`` only cuts on punctuation. A scan that lost the sentence break
+    therefore turned "trước đây công tác tại Cục A hiện đang công tác tại Cục B"
+    into one former unit spanning both clauses; the marker itself is the boundary
+    that survives OCR, so cut there as well.
+    """
+    lowered = value.casefold()
+    cut = len(value)
+    for marker in markers:
+        pos = lowered.find(marker)
+        if 0 <= pos < cut:
+            cut = pos
+    return value[:cut]
+
+
+def _earliest_marker(lowered: str, markers: list[str]) -> tuple[int, str] | None:
+    """Find the first marker mentioned, preferring the longest one at that position.
+
+    Several markers overlap ("hiện đang công tác tại" contains "đang công tác tại"),
+    so scanning in list order could cut the value in the middle of the longer marker
+    and leave its tail as part of the unit name.
+    """
+    best: tuple[int, str] | None = None
+    for marker in markers:
+        pos = lowered.find(marker)
+        if pos < 0:
+            continue
+        if best is None or pos < best[0] or (pos == best[0] and len(marker) > len(best[1])):
+            best = (pos, marker)
+    return best
 
 
 def _line(d: dict):
@@ -498,24 +546,42 @@ def extract(text: str, structured: dict | None = None) -> Extraction:
         relation_conf = min(0.99, unit_score)
 
     if not current:
-        for marker in CURRENT_MARKERS:
-            pos = lowered.find(marker)
-            if pos >= 0:
-                after = text[pos + len(marker):]
-                current = _clean_unit(after)
-                relation_conf = _RULE_PRIOR["current_marker"]
-                field_scores["current_unit"] = relation_conf
-                chosen_evidence["current_unit"] = {
-                    "source": "narrative_text", "rule": "current_marker", "marker": marker,
-                    "score": relation_conf,
-                }
-                break
+        found_marker = _earliest_marker(lowered, CURRENT_MARKERS)
+        if found_marker is not None:
+            pos, marker = found_marker
+            after = text[pos + len(marker):]
+            # A later "trước đây công tác tại ..." clause is a former unit, not part of
+            # this one's name; without the cut it is swallowed whole whenever OCR drops
+            # the sentence punctuation _clean_unit relies on.
+            current = _clean_unit(_cut_at_markers(after, FORMER_MARKERS))
+            relation_conf = _RULE_PRIOR["current_marker"]
+            field_scores["current_unit"] = relation_conf
+            chosen_evidence["current_unit"] = {
+                "source": "narrative_text", "rule": "current_marker", "marker": marker,
+                "score": relation_conf,
+            }
 
-    former = []
+    former: list[str] = []
+    # An explicitly labelled historical unit ("Đơn vị công tác cũ: ...") is the
+    # strongest former-unit evidence there is, and it must never reach `current`.
+    labelled_former, _, _ = _pick([
+        ("structured", structured.get("former_unit_name"), {"rule": "structured_input"}),
+        ("table", table_values.get("former_unit_name"), table_evidence.get("former_unit_name")),
+        ("spatial", spatial.get("former_unit_name"), spatial_evidence.get("former_unit_name")),
+        (labelled_source, labelled.get("former_unit_name"), labelled_evidence.get("former_unit_name")),
+    ])
+    if labelled_former:
+        former.append(_clean_unit(labelled_former))
     for marker in FORMER_MARKERS:
         pos = lowered.find(marker)
         if pos >= 0:
-            former.append(_clean_unit(text[pos + len(marker):]))
+            # Symmetrically: stop at whichever marker comes next, so a current-unit
+            # clause running on from this one is not absorbed into the former unit.
+            value = _clean_unit(
+                _cut_at_markers(text[pos + len(marker):], CURRENT_MARKERS + FORMER_MARKERS)
+            )
+            if value and value not in former:
+                former.append(value)
 
     if not current:
         matches = re.findall(UNIT_PREFIXES + UNIT_NAME_BODY, text, flags=re.I)

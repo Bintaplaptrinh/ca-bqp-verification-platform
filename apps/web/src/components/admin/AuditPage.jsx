@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { Loader2, RefreshCw, FileText } from '../../icons/index.jsx';
 import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
+import NotificationModal from '../NotificationModal.jsx';
 
 export function AuditPage({ apiBaseUrl }) {
   const [items, setItems] = useState([]);
@@ -39,7 +40,7 @@ export function AuditPage({ apiBaseUrl }) {
           }
         />
 
-        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{String(error)}</div>}
+        <NotificationModal open={Boolean(error)} title="Không thể tải nhật ký" message={error} onClose={() => setError(null)} />
 
         {loading ? (
           <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>

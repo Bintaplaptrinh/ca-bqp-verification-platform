@@ -99,20 +99,44 @@ def _dead_letter(case_id: str, document_id: str, key: str, exc: Exception) -> No
 
 
 def _dispatch_event(db, event: OutboxEvent) -> bool:
+    """Deliver one outbox row, and mark it SENT only once delivery is durable.
+
+    Under Celery, publishing to the broker *is* the durable handoff, so the row is
+    marked SENT as soon as ``apply_async`` returns. The inline profile has no broker:
+    handing the task to an in-process thread pool is not durable at all, and marking
+    the row SENT at that point silently lost the work whenever the process died
+    between ``submit()`` and the task running — the Case then sat at RECEIVED forever
+    with nothing left to re-pick it. So the inline branch runs the task here and marks
+    the row afterwards; a crash in between leaves it PENDING, which is exactly what
+    the sweeper re-dispatches.
+    """
     if event.status == "SENT":
         return True
     event.attempts += 1
     try:
         if event.event_type == "DOCUMENT_PROCESS_REQUESTED":
             payload = event.payload or {}
-            from cabqp.workers.local_queue import enqueue
+            from cabqp.workers.local_queue import enqueue, inline_enabled, run_task_now
 
-            enqueue(
-                process_document,
-                payload["case_id"],
-                payload["document_id"],
-                payload["storage_key"],
-            )
+            args = (payload["case_id"], payload["document_id"], payload["storage_key"])
+            if inline_enabled():
+                # Commit the attempt first so this session stops holding the outbox row
+                # while the document is parsed: process_document opens its own session
+                # and must not wait on a lock held for the length of an OCR run.
+                db.commit()
+                try:
+                    run_task_now(process_document, *args)
+                except Exception:
+                    # The task exhausted its own retry budget and already ran its
+                    # terminal branch (Case FAILED + dead letter). Delivery did happen,
+                    # so the row is still SENT; re-queueing here would loop the sweeper
+                    # forever on a document that has permanently failed.
+                    logger.exception(
+                        "inline_document_task_terminal_failure",
+                        extra={"event": {"outbox_id": event.id, "case_id": payload.get("case_id")}},
+                    )
+            else:
+                enqueue(process_document, *args)
         else:
             raise ValueError(f"Unsupported outbox event type: {event.event_type}")
         event.status = "SENT"
@@ -318,7 +342,12 @@ def process_document(self, case_id: str, document_id: str, key: str):
                 idem = f"{document.id}:{block.index}"
                 if block.index == 0:
                     case_for_block = case
-                    case_for_block.idempotency_key = idem
+                    # Block #0 keeps the caller's own Idempotency-Key. Overwriting it
+                    # with the group key made a client retry carrying the original key
+                    # miss the existing Case and upload a duplicate. Siblings are still
+                    # keyed by the group so the fan-out itself stays idempotent, and
+                    # `_split_source.source_case_id` below is how block #0 is recovered
+                    # as a group member — the same mechanism the text path already uses.
                     document_for_block = document
                 else:
                     case_for_block = db.scalar(
@@ -359,6 +388,7 @@ def process_document(self, case_id: str, document_id: str, key: str):
                 structured = dict(base_payload)
                 structured["_split_source"] = {
                     "document_id": document.id,
+                    "source_case_id": case.id,
                     "block_index": block.index,
                     "block_count": len(blocks),
                 }

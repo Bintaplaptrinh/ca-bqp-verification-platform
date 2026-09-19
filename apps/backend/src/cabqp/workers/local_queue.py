@@ -1,11 +1,18 @@
 """In-process task runner for the local deployment profile.
 
 The platform's durability comes from the ``outbox_events`` table, not from the
-broker: an upload commits its Document and its outbox row in one transaction,
-and the row is only marked SENT once the work is handed off. That design does
+broker: an upload commits its Document and its outbox row in one transaction, and
+the row is only marked SENT once the work is durably delivered. That design does
 not actually require Celery, so the local profile drops Redis entirely and runs
 the same task functions on a small thread pool, with a sweeper that re-picks any
 row a crash left PENDING.
+
+What "durably delivered" means differs per profile, and the difference matters:
+publishing to a broker is itself durable, submitting to this thread pool is not.
+:func:`tasks._dispatch_event` therefore *runs* the document task inline before
+marking the row SENT, rather than marking it at submit time — see its docstring.
+Submitting work here is otherwise fire-and-forget by design, so nothing that must
+survive a crash may depend on :meth:`LocalTaskQueue.submit` alone.
 
 Retry semantics are reproduced rather than approximated: each task is invoked
 through :class:`_InlineContext`, which supplies the ``self.request.retries`` and
@@ -113,7 +120,12 @@ class LocalTaskQueue:
         self._lock = threading.Lock()
 
     def submit(self, task, *args) -> None:
-        """Queue a task. Failures are logged; durability lives in the outbox."""
+        """Queue a task without waiting for it.
+
+        Fire-and-forget: the task is not durable until whatever it does records its
+        own outcome. Callers that need a crash to be recoverable must go through the
+        outbox, not through this method.
+        """
 
         def runner():
             try:

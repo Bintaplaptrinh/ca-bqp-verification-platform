@@ -268,6 +268,12 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), p: Principal = 
             must_change_password=True,
             created_by=p.username,
         )
+    except auth_service.IdentityConflictError as exc:
+        # A duplicate address or personal code is a conflict with an existing
+        # account, not a malformed request; the web client keys its own message
+        # off the 409.
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -304,6 +310,24 @@ def update_user(
 ):
     user = _target(db, username)
     _guard_admin_target(user)
+
+    # Normalize before comparing, so re-saving the same address in a different
+    # case is a no-op rather than a self-conflict, and refuse an address or a
+    # personal code another account already holds. The unique indexes on
+    # app_users are the backstop; this is what produces a readable message.
+    if body.email is not None:
+        body.email = auth_service.normalize_email(body.email)
+    if body.personal_code is not None:
+        body.personal_code = auth_service.normalize_personal_code(body.personal_code)
+    try:
+        auth_service.ensure_identity_available(
+            db,
+            email=body.email,
+            personal_code=body.personal_code,
+            exclude_username=user.username,
+        )
+    except auth_service.IdentityConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
     changes: dict[str, object] = {}
     for field in (

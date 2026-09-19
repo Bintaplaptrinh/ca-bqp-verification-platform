@@ -418,6 +418,106 @@ def test_account_creation_requires_a_valid_email(client, accounts):
         assert response.status_code == 422, response.text
 
 
+def test_two_accounts_cannot_share_an_email(client, accounts):
+    """One mailbox, one account.
+
+    The issued password and every one-time sign-in code go to this address, so a
+    second account on the same mailbox hands its holder a way in as either.
+    """
+    token = _login(client, "admin", "admin")
+    _create_account(client, token, display_name="Người Thứ Nhất", username="nguoimot",
+                    email="chung@cabqp.local")
+
+    response = client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"display_name": "Người Thứ Hai", "username": "nguoihai",
+              "email": "chung@cabqp.local"},
+    )
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert "chung@cabqp.local" in detail
+    assert "nguoimot" in detail, "the message names the account already holding it"
+    assert client.get("/api/v1/admin/users/nguoihai", headers=_auth(token)).status_code == 404
+
+
+def test_email_uniqueness_ignores_letter_case(client, accounts):
+    """`A@X` and `a@x` are the same mailbox, so the second one is still refused."""
+    token = _login(client, "admin", "admin")
+    first = client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"display_name": "Người Một", "username": "mota", "email": "Hoa.Thuong@CABQP.local"},
+    )
+    assert first.status_code == 201, first.text
+    assert first.json()["user"]["email"] == "hoa.thuong@cabqp.local", "stored lower-cased"
+
+    response = client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"display_name": "Người Hai", "username": "haiba", "email": "HOA.THUONG@cabqp.LOCAL"},
+    )
+    assert response.status_code == 409, response.text
+
+
+def test_two_accounts_cannot_share_a_personal_code(client, accounts):
+    """The personal code ties an audit actor back to a person; a duplicate breaks that."""
+    token = _login(client, "admin", "admin")
+    _create_account(client, token, display_name="Cán Bộ A", username="canboa",
+                    personal_code="CA-2026-0417", email="canboa@cabqp.local")
+
+    response = client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"display_name": "Cán Bộ B", "username": "canbob",
+              "personal_code": "ca-2026-0417", "email": "canbob@cabqp.local"},
+    )
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert "CA-2026-0417" in detail
+    assert "canboa" in detail
+
+
+def test_editing_an_account_cannot_take_another_accounts_identity(client, accounts):
+    """The same rule applies on PATCH, and re-saving one's own values is not a conflict."""
+    token = _login(client, "admin", "admin")
+    _create_account(client, token, display_name="Cán Bộ A", username="giucanboa",
+                    personal_code="CA-1", email="giua@cabqp.local")
+    _create_account(client, token, display_name="Cán Bộ B", username="giucanbob",
+                    personal_code="CA-2", email="giub@cabqp.local")
+
+    taken_email = client.patch("/api/v1/admin/users/giucanbob", headers=_auth(token),
+                               json={"email": "giua@cabqp.local"})
+    assert taken_email.status_code == 409, taken_email.text
+
+    taken_code = client.patch("/api/v1/admin/users/giucanbob", headers=_auth(token),
+                              json={"personal_code": "ca-1"})
+    assert taken_code.status_code == 409, taken_code.text
+
+    # Its own values, in a different case, are still its own.
+    own = client.patch("/api/v1/admin/users/giucanbob", headers=_auth(token),
+                       json={"email": "GIUB@cabqp.local", "personal_code": "ca-2"})
+    assert own.status_code == 200, own.text
+    assert own.json()["user"]["email"] == "giub@cabqp.local"
+
+
+def test_identity_uniqueness_is_enforced_by_the_database_too(db):
+    """The service check gives the message; the index is what a race cannot pass."""
+    from sqlalchemy.exc import IntegrityError
+
+    auth_service.create_user(db, username="rieng1", display_name="Một",
+                             email="race@cabqp.local", personal_code="RC-1")
+    db.commit()
+
+    # Bypass the service check the way a second concurrent request would, by
+    # writing the row directly.
+    db.add(AppUser(username="rieng2", password_hash="x", display_name="Hai",
+                   email="race@cabqp.local", permissions=[], coverage_groups=[]))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
 def test_issued_password_is_generated_by_the_passwordgen_library(client, accounts):
     """Shape and entropy come from `passwordgen`, and are recorded for audit."""
     from cabqp.modules.auth.service import GENERATED_PASSWORD_LENGTH, password_entropy_bits

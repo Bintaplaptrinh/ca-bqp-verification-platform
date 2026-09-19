@@ -439,6 +439,51 @@ def list_cases(
         else:
             q = q.where(Case.created_by == p.username)
     total = db.scalar(select(func.count()).select_from(q.subquery())) or 0
+    # The summary tiles count the whole scoped queue, not the page. Counting the
+    # returned rows in the client capped every figure at page_size, so a queue
+    # past 200 cases reported a flat 200 forever.
+    scoped_ids = q.with_only_columns(Case.id, Case.workflow_status).subquery()
+    breakdown = db.execute(
+        select(
+            func.count().label("n"),
+            scoped_ids.c.workflow_status,
+            VerificationResult.resolution_status,
+            VerificationResult.organization_type,
+        )
+        .select_from(scoped_ids)
+        .outerjoin(VerificationResult, VerificationResult.case_id == scoped_ids.c.id)
+        .group_by(
+            scoped_ids.c.workflow_status,
+            VerificationResult.resolution_status,
+            VerificationResult.organization_type,
+        )
+    ).all()
+    # A Case awaiting a human is "cần xác minh" whatever label the resolver left on
+    # it. Counting only AMBIGUOUS/CONFLICT filed every other abstention — NOT_FOUND,
+    # a failed parse gate, a low-confidence extraction — under "chưa có kết luận",
+    # which understated the review queue and contradicted the per-row badges.
+    verified = sum(
+        row.n
+        for row in breakdown
+        if row.workflow_status != "NEED_REVIEW"
+        and row.resolution_status == "MATCHED"
+        and row.organization_type in ("BCA", "BQP")
+    )
+    need_review = sum(
+        row.n
+        for row in breakdown
+        if row.workflow_status == "NEED_REVIEW"
+        or row.resolution_status in ("AMBIGUOUS", "CONFLICT")
+    )
+    # "Ngoài phạm vi" is a decided outcome with a resolved unit behind it, counted
+    # apart from "chưa có kết luận" so NOT_FOUND and OTHER are never one figure.
+    out_of_scope = sum(
+        row.n
+        for row in breakdown
+        if row.workflow_status != "NEED_REVIEW"
+        and row.resolution_status == "MATCHED"
+        and row.organization_type == "OTHER"
+    )
     items = list(
         db.scalars(
             q.order_by(Case.created_at.desc())
@@ -483,6 +528,19 @@ def list_cases(
             for x in items
         ],
         "total": total,
+        # Counted over the caller's whole scoped queue, so they stay correct
+        # past one page. A case with no result row, or one that resolved to
+        # anything else, falls into no_conclusion; it is deliberately the
+        # remainder rather than its own predicate, so the buckets always add up.
+        # The predicates above are mutually exclusive, which is what keeps the
+        # remainder non-negative.
+        "totals": {
+            "all": total,
+            "verified": verified,
+            "need_review": need_review,
+            "out_of_scope": out_of_scope,
+            "no_conclusion": total - verified - need_review - out_of_scope,
+        },
         "page": page,
         "page_size": page_size,
     }
@@ -536,7 +594,11 @@ def get_case(
         "synthetic_welfare_facts": synthetic_welfare_facts,
         "resolution_status": r.resolution_status if r else None,
         "workflow_status": c.workflow_status,
-        "verification_status": "Đã xác định" if c.workflow_status == "COMPLETED" else "Cần xác minh",
+        # A finished workflow is not the same as an identified unit. A reviewer who
+        # decides UNKNOWN closes the Case as COMPLETED while the result stays
+        # NOT_FOUND/UNKNOWN, and reporting that as "Đã xác định" contradicted the
+        # very decision that was recorded.
+        "verification_status": _verification_status(c, r),
         "evidence": r.evidence if r else None,
         "person": person,
         "case": {
@@ -608,13 +670,34 @@ def get_case(
     }
 
 
+def _verification_status(case: Case, result: VerificationResult | None) -> str:
+    """Operator-facing wording for what was actually concluded about this Case.
+
+    Three outcomes, not two: a resolved unit, an open abstention, and a closed Case
+    that reached no unit. ``NOT_FOUND`` is deliberately *not* merged into ``OTHER``
+    — "outside BCA/BQP" is a conclusion, "not identified" is the absence of one.
+    """
+    if case.workflow_status == "NEED_REVIEW":
+        return "Cần xác minh"
+    if case.workflow_status == "FAILED":
+        return "Không xử lý được"
+    if case.workflow_status != "COMPLETED":
+        return "Đang xử lý"
+    if result is not None and result.resolution_status == "MATCHED":
+        if result.organization_type == "OTHER":
+            return "Ngoài phạm vi CA/BQP"
+        if result.organization_type in ("BCA", "BQP"):
+            return "Đã xác định"
+    return "Chưa xác định được đơn vị"
+
+
 def _split_group_key(result: VerificationResult | None) -> tuple[str | None, dict]:
     """Identify the multi-subject group a Case belongs to, if any.
 
-    Both fan-out paths stamp ``evidence.split_source`` and key every sibling's
+    Both fan-out paths stamp ``evidence.split_source`` and key every *sibling's*
     ``idempotency_key`` as ``f"{group}:{block_index}"`` — the document id when the
     split happened in the document worker, the originating Case id when it happened
-    on the synchronous text path. Block #0 on the text path keeps the caller's own
+    on the synchronous text path. On both paths block #0 keeps the caller's own
     Idempotency-Key, so it is recovered from ``source_case_id`` rather than the key.
     """
     split = ((result.evidence or {}).get("split_source") or {}) if result else {}

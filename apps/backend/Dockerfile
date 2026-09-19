@@ -13,8 +13,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# git is a build requirement, not an afterthought: `passwordgen` is pinned to a
+# git+https source in pyproject.toml (the PyPI name is an unrelated project), and
+# pip resolves a VCS requirement by shelling out to `git clone`. python:3.11-slim
+# ships without it, so the dependency install below fails outright when it is missing.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libmagic1 libgl1 libglib2.0-0 tesseract-ocr tesseract-ocr-vie fonts-dejavu-core \
+    && apt-get install -y --no-install-recommends git libmagic1 libgl1 libglib2.0-0 tesseract-ocr tesseract-ocr-vie fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system cabqp \
     && useradd --system --gid cabqp --home-dir /app --shell /usr/sbin/nologin cabqp

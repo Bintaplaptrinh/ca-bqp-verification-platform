@@ -64,8 +64,14 @@ def probe_pdf(content: bytes) -> RoutingDecision:
     try:
         import fitz
         doc=fitz.open(stream=content, filetype="pdf")
-    except Exception:
-        return RoutingDecision(InputKind.PDF_SCAN, "pdf", "pymupdf_open_failed_assume_scan")
+    except Exception as exc:
+        # A file that only *starts* with "%PDF-" passes magic-byte validation, so a
+        # truncated or corrupt upload reaches here. Treating it as a scan was not a
+        # safe fallback: every scan path rasterizes through this same library, so the
+        # document could never be read — it just failed later, with OCR blamed for it.
+        # Refuse it as a document instead, which the upload route answers 422 to and
+        # the worker turns into an operator-visible NEED_REVIEW.
+        raise DocumentLimitError("INVALID_PDF_DOCUMENT", reason=type(exc).__name__) from exc
     settings=get_settings()
     if len(doc) > settings.document_max_pdf_pages:
         pages=len(doc); doc.close()

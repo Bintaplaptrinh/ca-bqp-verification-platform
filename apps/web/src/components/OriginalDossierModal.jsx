@@ -25,9 +25,12 @@ const STATUS_LABELS = {
   FAILED: 'Xử lý không thành công',
 };
 
+// Keyed by the values Document.parse_status actually holds. The database CHECK
+// constraint allows exactly PENDING / PARSED / FAILED (migration-backed), so the
+// former COMPLETED/PROCESSING keys matched nothing and every successfully parsed
+// document fell through to "Chưa xử lý".
 const PARSE_STATUS_LABELS = {
-  COMPLETED: 'Đã đọc xong',
-  PROCESSING: 'Đang đọc tài liệu',
+  PARSED: 'Đã đọc xong',
   FAILED: 'Không thể đọc tài liệu',
   PENDING: 'Đang chờ xử lý',
 };
@@ -116,7 +119,11 @@ export default function OriginalDossierModal({ isOpen, onClose, caseDetail, onOp
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-200/60">
                   <span className="text-slate-500">Trạng thái hồ sơ:</span>
-                  <span className="font-semibold text-slate-900">{STATUS_LABELS[detail.verification_status] || 'Chưa xác định'}</span>
+                  {/* verification_status already arrives as the operator-facing
+                      wording from the API; looking it up in STATUS_LABELS (keyed by
+                      resolution codes) never matched and always printed the
+                      fallback. Render it as given. */}
+                  <span className="font-semibold text-slate-900">{detail.verification_status || 'Chưa xác định'}</span>
                 </div>
               </div>
             </div>

@@ -1,12 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import {
-  Check,
-  Copy,
   KeyRound,
   Loader2,
   Lock,
-  Mail,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -15,6 +12,7 @@ import {
   UserPlus,
 } from '../../icons/index.jsx';
 import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
+import NotificationModal from '../NotificationModal.jsx';
 
 /**
  * Account administration.
@@ -61,84 +59,45 @@ function CredentialDeliveryModal({ credential, onDismiss }) {
   if (!credential) return null;
 
   const delivered = credential.delivery?.ok;
-  const statusStyle = delivered
-    ? {
-        border: 'border-emerald-300',
-        icon: 'bg-emerald-50 text-emerald-700',
-        text: 'text-emerald-700',
-        button: 'border-emerald-300 text-emerald-700 hover:bg-emerald-50',
-      }
-    : {
-        border: 'border-amber-400',
-        icon: 'bg-amber-50 text-amber-700',
-        text: 'text-amber-700',
-        button: 'border-amber-400 text-amber-700 hover:bg-amber-50',
-      };
+
+  const copyCredential = async () => {
+    try {
+      await navigator.clipboard.writeText(`${credential.username} / ${credential.password}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* Clipboard access can be refused; the value stays visible on screen. */
+    }
+  };
 
   return (
-    <dialog
-      className="modal modal-open"
+    <NotificationModal
       open
-      aria-labelledby="credential-delivery-title"
-      onCancel={(event) => {
-        event.preventDefault();
-        onDismiss();
-      }}
+      title="Thông báo"
+      message={credential.notice}
+      tone={delivered ? 'success' : 'warning'}
+      primaryLabel={credential.password ? (copied ? 'Đã sao chép' : 'Sao chép thông tin') : null}
+      onPrimary={credential.password ? copyCredential : undefined}
+      onClose={onDismiss}
     >
-      <div className={`modal-box max-w-lg p-0 bg-white! border ${statusStyle.border} rounded-[3px]! select-text!`}>
-        <div role="alert" className="alert alert-vertical sm:alert-horizontal bg-white! text-slate-900! rounded-[3px]!">
-          <div className={`w-9 h-9 flex items-center justify-center flex-shrink-0 rounded-[3px]! ${statusStyle.icon}`}>
-            {delivered ? <Mail className="w-5 h-5" /> : <KeyRound className="w-5 h-5" />}
-          </div>
-          <div className="flex-1 min-w-0">
-            <h2 id="credential-delivery-title" className={`text-sm font-bold ${statusStyle.text}`}>
-              {delivered ? `Đã gửi mật khẩu tới ${credential.email}` : 'Không gửi được thư'}
-            </h2>
-            <p className="text-xs mt-0.5 text-slate-600">{credential.notice}</p>
-
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-slate-600">Tên đăng nhập:</span>
-              <code className="px-2 py-1 rounded-[3px]! bg-white! border border-slate-300 text-sm font-mono text-slate-900 select-text!">
-                {credential.username}
-              </code>
-            </div>
-
-            {credential.password && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-slate-600">Mật khẩu:</span>
-                <code className="px-2 py-1 rounded-[3px]! bg-white! border border-slate-300 text-sm font-mono text-slate-900 select-text!">
-                  {credential.password}
-                </code>
-                <button
-                  type="button"
-                  className="btn btn-sm rounded-[3px]! bg-white! border-slate-300 text-slate-700 hover:bg-slate-50 select-text!"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(`${credential.username} / ${credential.password}`);
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 1500);
-                    } catch {
-                      /* Clipboard access can be refused; the value stays visible on screen. */
-                    }
-                  }}
-                >
-                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  {copied ? 'Đã sao chép' : 'Sao chép'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="modal-action px-6 py-4 mt-0 border-t border-slate-200">
-          <button type="button" className={`btn btn-sm rounded-[3px]! bg-white! ${statusStyle.button} select-text!`} onClick={onDismiss}>
-            Đóng
-          </button>
-        </div>
+      <p className={`text-center font-bold ${delivered ? 'text-success' : 'text-warning'}`}>
+        {delivered ? `Đã gửi mật khẩu tới ${credential.email}` : 'Không gửi được thư'}
+      </p>
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+        <span>Tên đăng nhập:</span>
+        <code className="rounded-field border border-base-300 bg-base-200 px-2 py-1 font-mono text-base-content select-text!">
+          {credential.username}
+        </code>
       </div>
-      <form method="dialog" className="modal-backdrop">
-        <button type="button" aria-label="Đóng thông báo" onClick={onDismiss}>Đóng</button>
-      </form>
-    </dialog>
+      {credential.password && (
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+          <span>Mật khẩu:</span>
+          <code className="rounded-field border border-base-300 bg-base-200 px-2 py-1 font-mono text-base-content select-text!">
+            {credential.password}
+          </code>
+        </div>
+      )}
+    </NotificationModal>
   );
 }
 
@@ -223,6 +182,8 @@ export function UsersAdminPage({ apiBaseUrl }) {
   const [presets, setPresets] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [accountToDelete, setAccountToDelete] = useState(null);
   const [query, setQuery] = useState('');
   const [credential, setCredential] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -292,6 +253,7 @@ export function UsersAdminPage({ apiBaseUrl }) {
     try {
       await axios.patch(`${base}/${encodeURIComponent(username)}`, body);
       await load();
+      setNotice(`Đã cập nhật tài khoản “${username}”.`);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -320,19 +282,14 @@ export function UsersAdminPage({ apiBaseUrl }) {
   }
 
   async function removeAccount(user) {
-    // Irreversible, and the officer loses access immediately — so it asks first,
-    // naming the account rather than just "this user".
-    const confirmed = window.confirm(
-      `Xóa vĩnh viễn tài khoản "${user.username}" (${user.display_name})?\n\n` +
-        'Mọi phiên đăng nhập sẽ bị thu hồi ngay. Hồ sơ và nhật ký kiểm toán do tài khoản này tạo vẫn được giữ nguyên.'
-    );
-    if (!confirmed) return;
     setBusyUser(user.username);
     setError(null);
     try {
       await axios.delete(`${base}/${encodeURIComponent(user.username)}`);
       if (credential?.username === user.username) setCredential(null);
+      setAccountToDelete(null);
       await load();
+      setNotice(`Đã xóa tài khoản “${user.username}”.`);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -345,6 +302,7 @@ export function UsersAdminPage({ apiBaseUrl }) {
     try {
       await axios.post(`${base}/${encodeURIComponent(username)}/unlock`);
       await load();
+      setNotice(`Đã mở khóa tài khoản “${username}”.`);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -380,10 +338,20 @@ export function UsersAdminPage({ apiBaseUrl }) {
         />
 
         <CredentialDeliveryModal credential={credential} onDismiss={() => setCredential(null)} />
-
-        {error && (
-          <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{error}</div>
-        )}
+        <NotificationModal open={Boolean(error)} title="Không thể thực hiện" message={error} onClose={() => setError(null)} />
+        <NotificationModal open={Boolean(notice)} title="Thông báo" message={notice} tone="success" onClose={() => setNotice(null)} />
+        <NotificationModal
+          open={Boolean(accountToDelete)}
+          title="Xóa tài khoản"
+          message={accountToDelete
+            ? `Bạn có chắc chắn muốn xóa vĩnh viễn tài khoản “${accountToDelete.username}” (${accountToDelete.display_name})?\n\nMọi phiên đăng nhập sẽ bị thu hồi ngay. Hồ sơ và nhật ký kiểm toán do tài khoản này tạo vẫn được giữ nguyên.`
+            : ''}
+          primaryLabel={busyUser === accountToDelete?.username ? 'Đang xóa' : 'Xóa tài khoản'}
+          primaryDisabled={busyUser === accountToDelete?.username}
+          onPrimary={() => accountToDelete && removeAccount(accountToDelete)}
+          onClose={() => setAccountToDelete(null)}
+          closeOnBackdrop={false}
+        />
 
         {/* Create */}
         <form onSubmit={createAccount} className="bg-white border border-slate-200 rounded-md p-5 mb-6">
@@ -391,6 +359,9 @@ export function UsersAdminPage({ apiBaseUrl }) {
             <UserPlus className="w-4 h-4 text-red-600" />
             <h2 className="text-sm font-bold text-slate-900">Cấp tài khoản mới</h2>
           </div>
+          <p className="text-xs text-slate-500 mb-4">
+            Mã số cán bộ và thư điện tử phải là duy nhất, không dùng lại của tài khoản khác.
+          </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {field('display_name', 'Họ và tên *', { required: true, placeholder: 'Nguyễn Văn Hùng' })}
@@ -540,7 +511,7 @@ export function UsersAdminPage({ apiBaseUrl }) {
                             <button
                               type="button"
                               disabled={busyUser === u.username}
-                              onClick={() => removeAccount(u)}
+                              onClick={() => setAccountToDelete(u)}
                               title="Xóa vĩnh viễn tài khoản"
                               className="px-2 py-1 rounded border border-red-300 text-xs text-red-700 hover:bg-red-50"
                             >

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { RefreshCw, Loader2, CheckCircle2, XCircle, Plus, Building2 } from '../../icons/index.jsx';
 import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
+import NotificationModal from '../NotificationModal.jsx';
 
 const TABS = [
   { value: 'units', label: 'Đơn vị' },
@@ -103,7 +104,7 @@ function UnitsTab({ apiBaseUrl }) {
         </select>
       </div>
 
-      {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{String(error)}</div>}
+      <NotificationModal open={Boolean(error)} title="Không thể thực hiện" message={error} onClose={() => setError(null)} />
 
       {loading ? (
         <div className="flex items-center gap-3 text-slate-500 text-sm py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải</div>
@@ -180,7 +181,7 @@ function CandidatesTab({ apiBaseUrl }) {
 
   return (
     <div>
-      {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{String(error)}</div>}
+      <NotificationModal open={Boolean(error)} title="Không thể duyệt đề xuất" message={error} onClose={() => setError(null)} />
       <div className="space-y-2.5">
         {items.map((c) => (
           <div key={c.id} className="bg-white border border-slate-200 rounded-md p-4 flex items-start justify-between gap-4">
@@ -237,7 +238,7 @@ function VersionsTab({ apiBaseUrl }) {
 
   return (
     <div>
-      {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-4 py-3 mb-4">{String(error)}</div>}
+      <NotificationModal open={Boolean(error)} title="Không thể xử lý phiên bản" message={error} onClose={() => setError(null)} />
       <div className="bg-white border border-slate-200 rounded-md overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase">

@@ -56,6 +56,7 @@ import OriginalDossierModal from './OriginalDossierModal.jsx';
 import DetailedComparisonModal from './DetailedComparisonModal.jsx';
 import HistoryView from './HistoryView.jsx';
 import OcrResultModal from './OcrResultModal.jsx';
+import NotificationModal from './NotificationModal.jsx';
 import { ReviewsPage } from './admin/ReviewsPage.jsx';
 import { RegistryAdminPage } from './admin/RegistryAdminPage.jsx';
 import { PersonRegistryAdminPage } from './admin/PersonRegistryAdminPage.jsx';
@@ -64,8 +65,16 @@ import { UsersAdminPage } from './admin/UsersAdminPage.jsx';
 import { can, getAccessToken } from '../auth.ts';
 import { P } from '../permissions.ts';
 
-// Default FastAPI backend URL
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// Prefix for the calls that build an absolute-ish URL (the admin pages and the
+// history list). It defaults to the empty string so those calls stay
+// same-origin and travel the same path as the rest of the tree: the Vite dev
+// proxy locally, Nginx in the container. It used to default to
+// 'http://localhost:8000', which resolves in the *visitor's* browser, not on
+// the server — every admin screen failed with a bare "Network Error" for anyone
+// reaching the app over a tunnel or a LAN address, while working on the
+// developer's own machine. Override with VITE_API_BASE_URL only when the API is
+// genuinely served from another origin, and add that origin to CORS_ORIGINS.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 // Builds the same currentCaseData shape from a real GET /cases/{id} response,
 // shared by the live-search success path and the History "Xem lại" reopen
@@ -76,12 +85,19 @@ function buildCaseResultFromDetail(caseId, caseDetail) {
   return {
     case_code: `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}`,
     case_id: caseId,
-    organization_type: caseDetail?.organization_type || res?.organization_type || 'OTHER',
-    resolution_status: caseDetail?.resolution_status || res?.resolution_status || 'MATCHED',
-    workflow_status: caseDetail?.case?.workflow_status || caseDetail?.workflow_status || 'PROCESSED',
+    // A case the server has not classified is UNKNOWN, never OTHER: OTHER is a
+    // decision ("ngoài phạm vi BCA/BQP") the pipeline has to reach, and
+    // NOT_FOUND != OTHER. Likewise an absent resolution/workflow status stays
+    // absent rather than defaulting to MATCHED/PROCESSED, which would report a
+    // conclusion nothing produced.
+    organization_type: caseDetail?.organization_type || res?.organization_type || 'UNKNOWN',
+    resolution_status: caseDetail?.resolution_status || res?.resolution_status || null,
+    workflow_status: caseDetail?.case?.workflow_status || caseDetail?.workflow_status || null,
     unit_id: res?.unit_id,
     current_unit: caseDetail?.current_unit || res?.evidence?.canonical_name || '',
     fullName: caseDetail?.subject?.name || extracted.subject_name || '',
+    subject_code: caseDetail?.subject?.code || extracted.subject_code || '',
+    position: caseDetail?.subject?.position || extracted.position || '',
     subject_group: caseDetail?.subject_group || null,
     subject_group_method: res?.evidence?.subject_group_method || null,
     subject_group_confidence: res?.evidence?.subject_group_confidence ?? null,
@@ -126,11 +142,20 @@ const POLICY_STATUS_LABELS = {
   UNKNOWN: 'Chưa xác định',
 };
 
+// Which screen a decided Case belongs on. Three outcomes, in this order, because
+// they are not interchangeable: a Case still awaiting a human outranks whatever
+// label the resolver left on it; a resolved unit is a conclusion whether or not it
+// is BCA/BQP; and only a genuinely unresolved Case is "no conclusion". Collapsing
+// MATCHED/OTHER into the last bucket reported an evidenced, out-of-scope result as
+// "Không tìm thấy" — NOT_FOUND != OTHER.
 function resolvedStateFromDetail(caseDetail) {
   const res = caseDetail?.result;
-  const org = caseDetail?.organization_type || res?.organization_type || 'OTHER';
-  if (caseDetail?.resolution_status === 'MATCHED' && (org === 'BCA' || org === 'BQP')) return 'verified';
-  if (caseDetail?.resolution_status === 'AMBIGUOUS' || caseDetail?.case?.workflow_status === 'NEED_REVIEW') return 'needs-verification';
+  const org = caseDetail?.organization_type || res?.organization_type || 'UNKNOWN';
+  const status = caseDetail?.resolution_status || res?.resolution_status;
+  if (caseDetail?.case?.workflow_status === 'NEED_REVIEW') return 'needs-verification';
+  if (status === 'MATCHED' && (org === 'BCA' || org === 'BQP')) return 'verified';
+  if (status === 'MATCHED' && org === 'OTHER') return 'out-of-scope';
+  if (status === 'AMBIGUOUS' || status === 'CONFLICT') return 'needs-verification';
   return 'no-conclusion';
 }
 
@@ -152,6 +177,26 @@ axios.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Shared derivation for one row of GET /cases. `item` carries workflow_status,
+// resolution_status and organization_type; all three are needed to say what
+// happened to a Case, and the first of them decides on its own whether a human
+// still owns it.
+function historyStatusCategory(item) {
+  if (item?.workflow_status === 'NEED_REVIEW') return 'NEED_REVIEW';
+  if (item?.resolution_status === 'MATCHED' && ['BCA', 'BQP'].includes(item?.organization_type)) return 'VERIFIED';
+  if (item?.resolution_status === 'MATCHED' && item?.organization_type === 'OTHER') return 'OUT_OF_SCOPE';
+  if (['AMBIGUOUS', 'CONFLICT'].includes(item?.resolution_status)) return 'NEED_REVIEW';
+  return 'NO_CONCLUSION';
+}
+
+function historyAppState(item) {
+  const category = historyStatusCategory(item);
+  if (category === 'VERIFIED') return 'verified';
+  if (category === 'NEED_REVIEW') return 'needs-verification';
+  if (category === 'OUT_OF_SCOPE') return 'out-of-scope';
+  return 'no-conclusion';
+}
 
 // Initial history starts completely clean and dynamically records user operations or backend cases
 const DEFAULT_HISTORY = [];
@@ -280,11 +325,13 @@ export default function CABQPVerification({ user, onLogout }) {
   const canViewAudit = can(user, P.AUDIT_VIEW);
   const canAdminUsers = can(user, P.USER_ADMIN);
 
-  // App view states: 'initial' | 'loading' | 'verified' | 'needs-verification' | 'no-conclusion'
+  // App view states: 'initial' | 'loading' | 'verified' | 'needs-verification'
+  //                 | 'out-of-scope' | 'no-conclusion'
   const [appState, setAppState] = useState('initial');
   // 'search' | 'history' | 'reviews' | 'admin-units' | 'admin-persons' | 'admin-audit'
   const [currentNav, setCurrentNav] = useState('search');
   const [apiError, setApiError] = useState(null);
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [activeTab, setActiveTab] = useState('manual');
   const [sidebarTab, setSidebarTab] = useState('manual');
   const [isDragging, setIsDragging] = useState(false);
@@ -353,6 +400,11 @@ export default function CABQPVerification({ user, onLogout }) {
     return DEFAULT_HISTORY;
   });
 
+  // Queue-wide counts from the server (GET /cases -> totals). Null until the
+  // first sync, and in the offline/localStorage path, where HistoryView falls
+  // back to counting the rows it actually holds.
+  const [historyTotals, setHistoryTotals] = useState(null);
+
   // Sync real cases from the backend database — on mount and every time the
   // Lịch sử tab is opened, so newly created/updated cases show up without a
   // full page reload (this view is not a static snapshot).
@@ -370,22 +422,20 @@ export default function CABQPVerification({ user, onLogout }) {
             position: c.position || '',
             identifier: c.subject_code || '',
             orgType: c.organization_type || 'UNKNOWN',
-            statusCategory:
-              c.resolution_status === 'MATCHED' && ['BCA', 'BQP'].includes(c.organization_type)
-                ? 'VERIFIED'
-                : ['AMBIGUOUS', 'CONFLICT'].includes(c.resolution_status)
-                ? 'NEED_REVIEW'
-                : 'NO_CONCLUSION',
-            appState:
-              c.resolution_status === 'MATCHED' && ['BCA', 'BQP'].includes(c.organization_type)
-                ? 'verified'
-                : ['AMBIGUOUS', 'CONFLICT'].includes(c.resolution_status)
-                ? 'needs-verification'
-                : 'no-conclusion',
+            // Built from the same precedence as resolvedStateFromDetail so a row and
+            // the detail screen it opens never disagree. workflow_status is what says
+            // a Case is still with a reviewer; reading only resolution_status filed
+            // every NOT_FOUND -> NEED_REVIEW case under "Chưa có kết luận".
+            statusCategory: historyStatusCategory(c),
+            appState: historyAppState(c),
             timestamp: new Date(c.created_at).toLocaleString('vi-VN'),
             officer: c.created_by || '',
           }));
           setHistoryList(backendMapped);
+          // The summary tiles and the nav badge count the whole queue, which
+          // the server reports; the array above is one page of at most 200 rows
+          // and counting it capped every figure at 200.
+          setHistoryTotals(res.data.totals || null);
         }
       })
       .catch(() => {
@@ -782,10 +832,13 @@ export default function CABQPVerification({ user, onLogout }) {
   };
 
   const handleClearHistory = () => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa toàn bộ lịch sử tra cứu trên thiết bị này?')) {
-      setHistoryList([]);
-      localStorage.removeItem('cabqp_verification_history');
-    }
+    setConfirmClearHistory(true);
+  };
+
+  const clearHistory = () => {
+    setHistoryList([]);
+    localStorage.removeItem('cabqp_verification_history');
+    setConfirmClearHistory(false);
   };
 
   const handleDeleteHistoryItem = (id) => {
@@ -805,7 +858,7 @@ export default function CABQPVerification({ user, onLogout }) {
     if (!file) return;
 
     if (file.size > 25 * 1024 * 1024) {
-      alert('Dung lượng tệp vượt quá giới hạn 25MB. Vui lòng chọn tệp nhỏ hơn.');
+      setApiError('Dung lượng tệp vượt quá giới hạn 25MB. Vui lòng chọn tệp nhỏ hơn.');
       return;
     }
 
@@ -950,6 +1003,13 @@ export default function CABQPVerification({ user, onLogout }) {
             ? `Tài liệu "${file.name}" có ${blockCount} người. Hệ thống đã tách thành ${blockCount} hồ sơ riêng biệt, xem tại mục Lịch sử.`
             : `Đã xử lý tài liệu: ${file.name}`
       );
+      if (failed) {
+        setApiError(
+          caseDetail?.error_message ||
+          caseDetail?.result?.error_message ||
+          `Không thể xử lý tài liệu “${file.name}”. Vui lòng kiểm tra tệp và thử lại.`
+        );
+      }
       setIsOcrModalOpen(true);
       if (isMultiSubject) {
         // Reached only when the group could not be listed (the branch above
@@ -959,7 +1019,12 @@ export default function CABQPVerification({ user, onLogout }) {
       }
     } catch (err) {
       setIsExtracting(false);
-      setUploadMessage('Không thể đọc tài liệu. Vui lòng kiểm tra tệp và thử lại.');
+      const message =
+        err?.response?.data?.detail?.message ||
+        err?.response?.data?.detail ||
+        'Không thể đọc tài liệu. Vui lòng kiểm tra tệp và thử lại.';
+      setUploadMessage(typeof message === 'string' ? message : 'Không thể đọc tài liệu. Vui lòng kiểm tra tệp và thử lại.');
+      setApiError(message);
       setExtractedData(null);
     }
   };
@@ -1226,7 +1291,7 @@ export default function CABQPVerification({ user, onLogout }) {
       <AppNavigation
         currentNav={currentNav}
         onNavigate={setCurrentNav}
-        historyCount={historyList.length}
+        historyCount={historyTotals?.all ?? historyList.length}
         adminEntries={[
           { nav: 'reviews', label: 'Hàng đợi đối soát', allowed: canReview },
           { nav: 'admin-units', label: 'Danh mục đơn vị', allowed: canAdminUnits },
@@ -1251,6 +1316,7 @@ export default function CABQPVerification({ user, onLogout }) {
         ) : currentNav === 'history' ? (
           <HistoryView
             historyList={historyList}
+            totals={historyTotals}
             onSelectCase={handleSelectHistoryCase}
             onRefresh={syncHistoryFromBackend}
             onBackToSearch={() => {
@@ -1294,11 +1360,6 @@ export default function CABQPVerification({ user, onLogout }) {
 
                   {activeTab === 'manual' ? (
                     <form onSubmit={handleSearch} noValidate>
-                      {apiError && (
-                        <div className="mb-3 rounded-md bg-red-50 px-3 py-2.5 text-xs leading-relaxed text-red-700">
-                          {String(apiError)}
-                        </div>
-                      )}
                       <div className="mb-3 inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
                         {[
                           { id: 'form', label: 'Theo biểu mẫu' },
@@ -1757,11 +1818,6 @@ export default function CABQPVerification({ user, onLogout }) {
 
               {sidebarTab === 'manual' ? (
                 <form onSubmit={handleSearch} className="space-y-3">
-                  {apiError && (
-                    <div className="rounded-md bg-red-50 px-3 py-2.5 text-xs leading-relaxed text-red-700">
-                      {String(apiError)}
-                    </div>
-                  )}
                   <div>
                     <label className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
                       Thông tin cần tra cứu
@@ -2102,6 +2158,8 @@ export default function CABQPVerification({ user, onLogout }) {
                       ? 'Đã xác định đơn vị'
                       : appState === 'needs-verification'
                       ? 'Cần xác minh'
+                      : appState === 'out-of-scope'
+                      ? 'Ngoài phạm vi CA/BQP'
                       : 'Không tìm thấy'}
                   </span>
                 </div>
@@ -2229,14 +2287,20 @@ export default function CABQPVerification({ user, onLogout }) {
 
                 {/* STATE 3: VERIFIED SUCCESS */}
                 {appState === 'verified' && (() => {
-                  const currentOrg =
-                    currentCaseData?.organization_type ||
-                    ((formValues.department || '').toLowerCase().includes('quân') ||
-                    (formValues.department || '').toLowerCase().includes('bqp') ||
-                    (formValues.identifier || '').toUpperCase().startsWith('BQP-')
-                      ? 'BQP'
-                      : 'BCA');
+                  // Whatever the server decided, and nothing else. This used to
+                  // fall back to guessing BCA/BQP from keywords the operator had
+                  // typed into the form ("quân", "bqp", a BQP- prefix), which
+                  // invented a ministry classification with no decision behind
+                  // it, exactly the client-side guessing removed from
+                  // handleSearch. This view only renders after the server
+                  // reported MATCHED with BCA or BQP, so there is nothing to
+                  // fall back to.
+                  const currentOrg = currentCaseData?.organization_type || 'UNKNOWN';
                   const isBqp = currentOrg === 'BQP';
+                  // Name the ministry from the decision, not from a two-way
+                  // "BQP or else Bộ Công an" guess: anything that is not BQP is
+                  // not automatically BCA.
+                  const currentOrgLabel = SUBJECT_ORG_LABELS[currentOrg] || SUBJECT_ORG_LABELS.UNKNOWN;
                   const eligibility = Array.isArray(currentCaseData?.eligibility) ? currentCaseData.eligibility : [];
                   const subjectGroup = currentCaseData?.subject_group || null;
                   const subjectGroupMethod = currentCaseData?.subject_group_method || null;
@@ -2271,11 +2335,11 @@ export default function CABQPVerification({ user, onLogout }) {
                             <h2 className="text-[21px] sm:text-[24px] font-bold text-slate-900 leading-tight">
                               Đơn vị thuộc phạm vi quản lý{' '}
                               <span className={isBqp ? 'text-emerald-700' : 'text-red-700'}>
-                                {isBqp ? 'Bộ Quốc phòng' : 'Bộ Công an'}
+                                {currentOrgLabel}
                               </span>
                             </h2>
                             <p className="text-[13.5px] text-slate-600 mt-1.5 leading-relaxed">
-                              Đã đối chiếu và xác định đơn vị <strong className="text-slate-800">{canonicalUnit}</strong> thuộc {isBqp ? 'Bộ Quốc phòng' : 'Bộ Công an'}.
+                              Đã đối chiếu và xác định đơn vị <strong className="text-slate-800">{canonicalUnit}</strong> thuộc {currentOrgLabel}.
                               {!subjectGroup && ' Chưa đủ dữ liệu để xác định nhóm đối tượng và chế độ, quyền lợi.'}
                             </p>
                           </div>
@@ -2532,7 +2596,17 @@ export default function CABQPVerification({ user, onLogout }) {
                   />
                 )}
 
-                {/* STATE 5: NO CONCLUSION */}
+                {/* STATE 5: OUT OF SCOPE — a decided result, not a missing one */}
+                {appState === 'out-of-scope' && (
+                  <OutOfScopeView
+                    currentCaseData={currentCaseData}
+                    onRetrySearch={() => {
+                      setAppState('initial');
+                    }}
+                  />
+                )}
+
+                {/* STATE 6: NO CONCLUSION */}
                 {appState === 'no-conclusion' && (
                   <NoConclusionView
                     formValues={formValues}
@@ -2552,16 +2626,27 @@ export default function CABQPVerification({ user, onLogout }) {
 
       <AppFooter />
 
-      {modalLoadError && (
-        <div className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-md border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800 shadow-lg">
-          <div className="flex items-start justify-between gap-3">
-            <span>{modalLoadError}</span>
-            <button type="button" onClick={() => setModalLoadError(null)} className="text-red-500 hover:text-red-700">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
+      <NotificationModal
+        open={Boolean(apiError)}
+        title="Không thể thực hiện tra cứu"
+        message={apiError}
+        onClose={() => setApiError(null)}
+      />
+      <NotificationModal
+        open={Boolean(modalLoadError)}
+        title="Không thể mở hồ sơ"
+        message={modalLoadError}
+        onClose={() => setModalLoadError(null)}
+      />
+      <NotificationModal
+        open={confirmClearHistory}
+        title="Xóa lịch sử tra cứu"
+        message="Bạn có chắc chắn muốn xóa toàn bộ lịch sử tra cứu trên thiết bị này?"
+        primaryLabel="Xóa lịch sử"
+        onPrimary={clearHistory}
+        onClose={() => setConfirmClearHistory(false)}
+        closeOnBackdrop={false}
+      />
 
       {/* Modals for Xem hồ sơ gốc & Đối chiếu chi tiết — both render the real
           case detail fetched by openCaseModal(); no client-side approval
@@ -2627,56 +2712,30 @@ export default function CABQPVerification({ user, onLogout }) {
  * cap — the client never states a limit of its own, so the two cannot disagree.
  */
 function BulkRowLimitModal({ error, onClose }) {
-  if (!error) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div
-        role="alertdialog"
-        aria-labelledby="bulk-limit-title"
-        className="w-full max-w-md bg-white rounded-md shadow-2xl border border-slate-200 overflow-hidden"
-      >
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-md bg-amber-50 border border-amber-200 flex items-center justify-center flex-shrink-0">
-            <AlertTriangle className="w-5 h-5 text-amber-600" />
+    <NotificationModal
+      open={Boolean(error)}
+      title="Danh sách vượt quá giới hạn"
+      message={error?.message}
+      closeLabel="Đóng"
+      onClose={onClose}
+      tone="warning"
+    >
+      {error?.fileName && <p className="mb-3 truncate text-center font-semibold">{error.fileName}</p>}
+      {Number.isFinite(error?.rows) && Number.isFinite(error?.limit) && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-box border border-base-300 bg-base-200 p-3 text-center">
+            <div className="text-xs">Số dòng trong tệp</div>
+            <div className="mt-1 text-xl font-bold text-warning">{error.rows}</div>
           </div>
-          <div className="min-w-0">
-            <h3 id="bulk-limit-title" className="text-[15px] font-bold text-slate-900">
-              Danh sách vượt quá giới hạn
-            </h3>
-            {error.fileName && <p className="text-xs text-slate-500 truncate">{error.fileName}</p>}
+          <div className="rounded-box border border-base-300 bg-base-200 p-3 text-center">
+            <div className="text-xs">Giới hạn mỗi lần</div>
+            <div className="mt-1 text-xl font-bold">{error.limit}</div>
           </div>
         </div>
-
-        <div className="px-5 py-4 space-y-3">
-          <p className="text-[13.5px] text-slate-700 leading-relaxed">{error.message}</p>
-          {Number.isFinite(error.rows) && Number.isFinite(error.limit) && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
-                <div className="text-[11.5px] text-slate-500">Số dòng trong tệp</div>
-                <div className="text-[19px] font-bold text-amber-700 mt-0.5">{error.rows}</div>
-              </div>
-              <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
-                <div className="text-[11.5px] text-slate-500">Giới hạn mỗi lần</div>
-                <div className="text-[19px] font-bold text-slate-900 mt-0.5">{error.limit}</div>
-              </div>
-            </div>
-          )}
-          <p className="text-[12.5px] text-slate-500">
-            Không có hồ sơ nào được tạo. Hãy tách tệp rồi tải lên lại từng phần.
-          </p>
-        </div>
-
-        <div className="px-5 py-4 border-t border-slate-200 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white text-sm font-semibold"
-          >
-            Đã hiểu
-          </button>
-        </div>
-      </div>
-    </div>
+      )}
+      <p className="mt-3 text-center">Không có hồ sơ nào được tạo. Hãy tách tệp rồi tải lên lại từng phần.</p>
+    </NotificationModal>
   );
 }
 
@@ -2818,12 +2877,15 @@ function BulkImportSummary({ state }) {
 // Row status for the multi-subject list. It mirrors resolvedStateFromDetail so a
 // name in the list and the detail screen it opens never disagree.
 function subjectRowStatus(item) {
-  const org = item?.organization_type || 'UNKNOWN';
-  if (item?.resolution_status === 'MATCHED' && (org === 'BCA' || org === 'BQP')) {
+  const category = historyStatusCategory(item);
+  if (category === 'VERIFIED') {
     return { label: 'Đã xác định đơn vị', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
   }
-  if (item?.resolution_status === 'AMBIGUOUS' || item?.resolution_status === 'CONFLICT' || item?.workflow_status === 'NEED_REVIEW') {
+  if (category === 'NEED_REVIEW') {
     return { label: 'Cần xác minh', className: 'bg-[#FDF0BE] text-amber-800 border-amber-200' };
+  }
+  if (category === 'OUT_OF_SCOPE') {
+    return { label: 'Ngoài phạm vi CA/BQP', className: 'bg-slate-100 text-slate-700 border-slate-300' };
   }
   return { label: 'Chưa có kết luận', className: 'bg-slate-100 text-slate-600 border-slate-200' };
 }
@@ -3037,6 +3099,7 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
     BCA: 'bg-red-50 text-red-700 border-red-200',
     BQP: 'bg-emerald-50 text-emerald-700 border-emerald-200',
     OTHER: 'bg-slate-50 text-slate-600 border-slate-200',
+    UNKNOWN: 'bg-slate-50 text-slate-500 border-slate-200',
   };
   const candidates = rawCandidates.map((c, idx) => ({
     id: idx + 1,
@@ -3044,8 +3107,11 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
     subjectYear: isPersonLookup ? c.birth_year || 'Chưa rõ' : displayYear,
     unitName: c.canonical_name || c.canonical_unit_name || c.unit_id || c.canonical_unit_id || 'Không rõ đơn vị',
     unitId: c.unit_id || c.canonical_unit_id || 'Chưa có',
-    orgType: c.organization_type || 'OTHER',
-    orgBadgeClass: groupColors[c.organization_type] || groupColors.OTHER,
+    // A candidate the resolver returned without an organization is UNKNOWN.
+    // Labelling it OTHER would tell the operator it was decided to be outside
+    // BCA/BQP, which is a different thing entirely.
+    orgType: c.organization_type || 'UNKNOWN',
+    orgBadgeClass: groupColors[c.organization_type] || groupColors.UNKNOWN,
     score: typeof c.score === 'number' ? `${Math.round(c.score)}%` : c.score ?? 'Chưa có',
   }));
   const selectedCandidate = candidates.find((c) => c.id === selectedRow) || candidates[0];
@@ -3312,6 +3378,70 @@ function NeedsVerificationView({ candidateName, formValues, currentCaseData, onV
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Sub-Component: Out Of Scope View
+//
+// MATCHED + OTHER: the unit was identified and it is not a BCA/BQP unit. This is a
+// conclusion backed by the registry, so it gets its own screen instead of sharing
+// the "không tìm thấy" wording with NOT_FOUND. It renders only fields that exist on
+// the GET /cases/{id} response and states no ministry name.
+function OutOfScopeView({ currentCaseData, onRetrySearch }) {
+  const unitName = currentCaseData?.current_unit || null;
+  return (
+    <div className="space-y-5">
+      <div className="rounded-md bg-slate-50 border border-slate-300 p-6 shadow-sm">
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-full bg-white text-slate-600 flex items-center justify-center border border-slate-300 shadow-sm flex-shrink-0">
+            <Info className="w-7 h-7" />
+          </div>
+          <div>
+            <span className="inline-block px-2 py-0.5 rounded text-[11.5px] font-bold uppercase tracking-wider bg-white border border-slate-300 text-slate-600 mb-1">
+              KẾT QUẢ ĐỐI SOÁT
+            </span>
+            <h2 className="text-[22px] sm:text-[24px] md:text-[26px] font-bold text-slate-900 leading-tight">
+              Đã xác định đơn vị, ngoài phạm vi CA/BQP
+            </h2>
+            <p className="text-[14px] text-slate-600 mt-1 leading-relaxed">
+              Đơn vị công tác đã được xác định trong danh mục{unitName ? ` là "${unitName}"` : ''} và
+              không thuộc Bộ Công an hoặc Bộ Quốc phòng. Đây là kết luận có căn cứ, khác với trường
+              hợp không tìm thấy hồ sơ trong danh mục.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-md border border-slate-200 p-5 shadow-sm">
+        <h4 className="text-[14.5px] font-bold text-slate-900 mb-3">Thông tin đối tượng</h4>
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13px]">
+          <div>
+            <dt className="text-slate-500">Họ và tên</dt>
+            <dd className="font-semibold text-slate-900">{currentCaseData?.fullName || 'Chưa có'}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Số hiệu / CCCD</dt>
+            <dd className="font-semibold text-slate-900">{currentCaseData?.subject_code || 'Chưa có'}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Chức vụ</dt>
+            <dd className="font-semibold text-slate-900">{currentCaseData?.position || 'Chưa có'}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Đơn vị công tác</dt>
+            <dd className="font-semibold text-slate-900">{unitName || 'Chưa có'}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <button
+        type="button"
+        onClick={onRetrySearch}
+        className="px-3 py-1.5 rounded-md border border-slate-200 text-[12.5px] font-semibold text-slate-700 hover:bg-slate-50"
+      >
+        Tra cứu mới
+      </button>
     </div>
   );
 }

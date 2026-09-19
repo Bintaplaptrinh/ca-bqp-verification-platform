@@ -12,6 +12,7 @@ import type { SignInMethods } from "./auth";
 import type { CurrentUser } from "./types";
 import VerificationModule from "./components/VerificationModule.jsx";
 import { BrandTitle } from "./components/layout/AppHeader.jsx";
+import NotificationModal from "./components/NotificationModal.jsx";
 
 const inputClass =
   "input-auth w-full h-10 px-3 rounded-md border border-slate-300 bg-white text-sm text-slate-900 placeholder-slate-400 outline-none";
@@ -41,22 +42,23 @@ function AuthShell({ children }: { children: React.ReactNode }) {
 const buttonClass =
   "w-full h-10 rounded-md bg-[#b91c1c] hover:bg-[#8a1010] disabled:bg-slate-400 text-white text-sm font-semibold transition-colors";
 
-function AuthCard({ title, subtitle, error, children }: {
+function AuthCard({ title, subtitle, error, onDismissError, children }: {
   title: string;
   subtitle: string;
   error: string | null;
+  onDismissError: () => void;
   children: React.ReactNode;
 }) {
   return (
     <section className="bg-white rounded-md shadow-2xl border-t-4 border-[#b91c1c] px-6 py-7 sm:px-8">
       <h1 className="text-center text-xl font-bold uppercase tracking-wide text-[#b91c1c]">{title}</h1>
       <p className="mt-1 text-center text-xs text-slate-500">{subtitle}</p>
-      {error && (
-        <div className="mt-5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700" role="alert">
-          <strong className="block font-semibold">Đăng nhập không thành công</strong>
-          <span className="block mt-0.5">{error}</span>
-        </div>
-      )}
+      <NotificationModal
+        open={Boolean(error)}
+        title="Đăng nhập không thành công"
+        message={error}
+        onClose={onDismissError}
+      />
       {children}
     </section>
   );
@@ -111,7 +113,7 @@ function PasswordForm({ onSignedIn }: { onSignedIn: (user: CurrentUser) => void 
   }
 
   return (
-    <AuthCard title="Đăng nhập" subtitle="Tài khoản do quản trị viên hệ thống cấp" error={error}>
+    <AuthCard title="Đăng nhập" subtitle="Tài khoản do quản trị viên hệ thống cấp" error={error} onDismissError={() => setError(null)}>
       <form className="mt-5 space-y-4" onSubmit={submit}>
         <UsernameField id="login-username" value={username} onChange={setUsername} />
 
@@ -218,7 +220,7 @@ function OtpForm({ methods, onSignedIn }: { methods: SignInMethods; onSignedIn: 
 
   if (stage === "request") {
     return (
-      <AuthCard title="Đăng nhập bằng mã" subtitle="Mã một lần sẽ được gửi tới hộp thư của tài khoản" error={error}>
+      <AuthCard title="Đăng nhập bằng mã" subtitle="Mã một lần sẽ được gửi tới hộp thư của tài khoản" error={error} onDismissError={() => setError(null)}>
         <form className="mt-5 space-y-4" onSubmit={sendCode}>
           <UsernameField id="otp-username" value={username} onChange={setUsername} />
           <button type="submit" disabled={busy} className={buttonClass}>
@@ -230,7 +232,7 @@ function OtpForm({ methods, onSignedIn }: { methods: SignInMethods; onSignedIn: 
   }
 
   return (
-    <AuthCard title="Nhập mã đăng nhập" subtitle={`Tài khoản ${username.trim()}`} error={error}>
+    <AuthCard title="Nhập mã đăng nhập" subtitle={`Tài khoản ${username.trim()}`} error={error} onDismissError={() => setError(null)}>
       {notice && (
         <p className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-600">
           {notice}
@@ -371,11 +373,12 @@ function ChangePasswordPage({ user, onDone }: { user: CurrentUser; onDone: () =>
           Đặt mật khẩu riêng trước khi sử dụng.
         </p>
 
-        {error && (
-          <div className="mt-5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700" role="alert">
-            {error}
-          </div>
-        )}
+        <NotificationModal
+          open={Boolean(error)}
+          title="Không thể đổi mật khẩu"
+          message={error}
+          onClose={() => setError(null)}
+        />
 
         <form className="mt-5 space-y-4" onSubmit={submit}>
           {[
