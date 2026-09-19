@@ -59,6 +59,21 @@ def ready(url: str) -> bool:
         return False
 
 
+def _unquote(value: str) -> str:
+    """Drop one layer of matching surrounding quotes, as dotenv readers do.
+
+    These values become real environment variables, which take priority over
+    pydantic's own ``.env`` lookup — and pydantic never strips quotes from a
+    real environment variable. Leaving them on turned
+    ``GMAIL_APP_PASSWORD="abcd efgh ijkl mnop"`` into a literal 21-character
+    string that Gmail rejected with ``SMTPAuthenticationError``, and
+    ``MAIL_FROM_NAME`` into a display name wearing its own quotes.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
 def read_env_file() -> dict[str, str]:
     """Parse the repo-root ``.env`` into a plain mapping."""
     values: dict[str, str] = {}
@@ -69,8 +84,10 @@ def read_env_file() -> dict[str, str]:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip()
+        values[key.strip()] = _unquote(value.strip())
     return values
 
 
@@ -193,7 +210,12 @@ def ensure_database() -> str:
         f"TESSERACT_CMD={Path(sys.executable).parent}/tesseract",
         f"POPPLER_PATH={Path(sys.executable).parent}",
     ]
-    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Anything already in the file that this profile does not generate — the
+    # GMAIL_USER / GMAIL_APP_PASSWORD credential above all — is carried over, so
+    # regenerating the database password does not silently disable outgoing mail.
+    generated = {line.split("=", 1)[0] for line in lines}
+    kept = [f"{k}={v}" for k, v in read_env_file().items() if k not in generated]
+    env_file.write_text("\n".join(lines + kept) + "\n", encoding="utf-8")
     print(f"Wrote {env_file} with a freshly generated database password.")
     return url
 

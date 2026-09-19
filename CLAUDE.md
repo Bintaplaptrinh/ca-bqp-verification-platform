@@ -45,7 +45,12 @@ It injects the root `.env` into every child's environment explicitly rather than
 relying on pydantic's relative lookup: alembic and the seed scripts run with
 `apps/backend` as their working directory, where a relative `.env` does not
 resolve. Same reason `USE_TF=0 USE_TORCH=1` is set there — importing
-`transformers` fails against the stale TensorFlow install otherwise.
+`transformers` fails against the stale TensorFlow install otherwise. Because
+those values become *real* environment variables, which outrank pydantic's own
+`.env` reading and are never unquoted by it, `read_env_file()` strips one layer
+of matching surrounding quotes itself — otherwise a quoted
+`GMAIL_APP_PASSWORD="abcd efgh ijkl mnop"` reaches Gmail with its quotes
+attached and every credential/OTP mail fails with `SMTPAuthenticationError`.
 
 `Makefile` targets mirror what CI runs:
 
@@ -200,6 +205,161 @@ administrator ticks. `coverage_groups` only ever narrows — an account holding
 `CASE_VIEW_ALL` with no coverage group sees the whole queue, which is the
 delivered preset's shape.
 
+`SINGLE_ACTIVE_SESSION` (default on) means a successful sign-in revokes every
+session that account already holds, so the same credentials cannot be live on two
+devices at once. It works because sessions carry no claims and are re-read per
+request: the other device stops working on its very next call, not at expiry.
+This is *not* SSO. There is deliberately no external identity provider, no OAuth
+2.0 and no OIDC in this build — the Keycloak realm and JWT/JWKS validation were
+removed on purpose, and "one device at a time" was implemented inside the local
+session layer instead. Re-introducing an IdP is an architecture decision, not a
+hardening task; do not add one as a side effect of some other change.
+
+## Transport and abuse resistance
+
+`shared/middleware.py` holds three concerns, applied to every request:
+
+- `SecurityHeadersMiddleware` is registered last so it is outermost, which is how
+  a 429 from the rate limiter and a 500 from the exception handler carry the
+  headers too. The API answers JSON and nothing else, so its policy is absolute:
+  `Content-Security-Policy: default-src 'none'; ...; frame-ancestors 'none'`,
+  `X-Frame-Options: DENY` (kept alongside CSP for browsers that only read it),
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`,
+  `Cache-Control: no-store`, and HSTS only when production is actually serving
+  HTTPS. `Settings.production_guards` refuses to start production with
+  `SECURITY_HEADERS_ENABLED=false`. The SPA is served by Nginx, not by this
+  process, and carries its own copy in `apps/web/nginx.conf`; that policy is
+  looser by necessity (`style-src`/`font-src` allow Google Fonts, because
+  `index.html` loads the Inter / Be Vietnam Pro / Material Symbols webfonts and
+  dropping them breaks the icon ligatures the e2e label matching depends on).
+  `vite.config.ts` sets the framing headers on the dev server for parity.
+- The rate limiter enforces three budgets per client address, all of which must
+  hold: per route shape (`RATE_LIMIT_PER_MINUTE`), across every route
+  (`RATE_LIMIT_IP_PER_MINUTE` — without it a flood just sprays paths and stays
+  under the per-route limit on each), and rejected credential attempts
+  (`RATE_LIMIT_AUTH_PER_MINUTE`, checked before the call and charged only on a
+  401/403, so an operator signing in normally never spends it). The account
+  lockout in `modules/auth/service.py` is a different control: it protects one
+  account, and does nothing against a sprayer walking a username list.
+- `client_address()` decides who a request belongs to. `X-Forwarded-For` is
+  honoured **only** when the socket peer matches `TRUSTED_PROXY_IPS` (addresses
+  or CIDR ranges); otherwise the socket address is used. Trusting the header
+  unconditionally, as an earlier version did, let any caller reset its own bucket
+  on every request by sending a new value. The corollary: a deployment that puts
+  Nginx, a load balancer or a WAF in front of the API **must** list that hop, or
+  every user collapses into one shared bucket.
+
+An external WAF (F5 BIG-IP ASM or equivalent) is where L7 signature filtering,
+bot fingerprinting and volumetric defence belong; it is not in this repository
+and cannot be installed from it. What the application guarantees is that it is
+correct behind one: real client addresses survive the hop through
+`TRUSTED_PROXY_IPS`, and the in-app limits stay in force if the appliance is
+bypassed.
+
+## Outgoing mail
+
+`modules/notifications/email.py` has exactly one transport: **Gmail SMTP**
+(`smtp.gmail.com:587`, STARTTLS) authenticated with a Google *app password* on
+`GMAIL_USER` / `GMAIL_APP_PASSWORD`. The self-hosted `SMTP_HOST`/`SMTP_PORT`/
+`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_USE_TLS` settings and the offline `.eml`
+file writer (`MAIL_OUTBOX_DIR`, `mail_transport`, `mail_outbox_path`) were
+removed — a configurable host let a deployment point issued passwords at an
+unauthenticated relay, and the file transport left them in a local directory.
+Do not reintroduce either; the host/port are constants on purpose.
+
+Gmail rewrites a `From` it does not own, so the sender address is always derived
+from `GMAIL_USER` and `MAIL_FROM_NAME` only sets the display name.
+`Settings.mail_configured` is true once both halves of the credential are
+present, and `production_guards` refuses to start production without them.
+`_credential_response` in `api/admin_users.py` still withholds the password on a
+successful send and returns it only when delivery failed.
+
+Messages are MIME multipart: `multipart/related` wrapping a
+`multipart/alternative` (plain text + HTML) plus the app's favicon as an inline
+`image/png` the HTML references by `cid:`. The markup lives in
+`modules/notifications/templates.py` and is deliberately table-based with inline
+styles only: mail clients strip `<style>` blocks and Outlook renders through
+Word, so flexbox/grid and external stylesheets do not survive. The logo ships
+inside the package (`modules/notifications/assets/logo.png`, declared in
+pyproject's `package-data`) rather than being read out of `apps/web` — the
+backend image has no copy of the web tree. Keep the plain-text alternative
+readable on its own; the tests read the credential and the OTP out of it.
+
+Tests never open a socket: `tests/mail_stub.py` replaces `smtplib.SMTP` through
+an autouse `conftest.py` fixture and records the `EmailMessage` that would have
+gone out, which is what `test_local_auth.py`'s `_issued_password` and
+`test_login_otp.py`'s `_sent_code` read.
+
+## One-time sign-in codes
+
+`POST /auth/otp/request` mails a six-digit code, `POST /auth/otp/verify`
+redeems it and opens an ordinary session; `GET /auth/methods` tells the frontend
+whether to render the tab. The service is `modules/auth/otp.py` and its module
+docstring is the authority on why each control exists. The properties to keep,
+each covered by a test in `tests/test_login_otp.py`:
+
+- The code never appears in a response body, in the subject line, or in the
+  inbox preheader. It travels by mail and nowhere else, and only its PBKDF2 hash
+  is stored.
+- `/auth/otp/request` answers **identically** for a real account, an unknown
+  username, an account with no address, a locked account and an exhausted
+  budget — and the SMTP conversation runs in a `BackgroundTask` *after* the
+  response so the timing does not distinguish them either. Do not add a
+  "không tìm thấy tài khoản" branch, a masked-email echo, or a delivery-failure
+  message: each one turns this into an account-enumeration oracle.
+- `/auth/otp/verify` gives one message for a wrong code and for an unknown
+  username, and pays a decoy PBKDF2 round on the unknown branch so both cost the
+  same. Deactivated/locked accounts keep their own message, matching what the
+  password form already discloses.
+- A wrong code charges the account's ordinary failed-attempt counter
+  (`auth_service.record_failed_attempt`), so code guessing locks an account
+  exactly as password guessing does. Without that this endpoint is a bypass of
+  the lockout.
+- A challenge is single-use, dies at `OTP_MAX_ATTEMPTS` wrong guesses even while
+  still fresh, and issuing a new code consumes every outstanding one — several
+  live codes would multiply a guesser's odds per attempt.
+- Mail volume is bounded by durable counts over `login_otps` rows, not an
+  in-process counter: a per-account cooldown, a per-account hourly cap and a
+  per-address hourly cap. The address cap is the one that stops a sprayer
+  walking a username list. Rows are therefore kept until `OTP_RETENTION_HOURS`
+  (longer than the one-hour windows) — purging on expiry would hand the budget
+  back. An unresolvable client address is charged to a shared `"unknown"`
+  bucket rather than skipping the check.
+- `/auth/otp/verify` is in `middleware._AUTH_PATHS`, so failures also spend the
+  per-address credential budget. `/auth/otp/request` deliberately is not: it
+  answers 200 to everyone, so there is no failure to count, and the per-route
+  and per-address budgets plus the caps above are what bound it.
+- The address the budgets are charged to comes from `middleware.client_address`,
+  the same function the rate limiter uses, so `TRUSTED_PROXY_IPS` governs it too.
+  Using `request.client.host` directly would collapse every caller behind a
+  proxy into one bucket.
+
+`Settings.otp_login_available` is `OTP_LOGIN_ENABLED and mail_configured`: a code
+that cannot be delivered is never issued, and both endpoints answer 503 in that
+state. `production_guards` refuses a cooldown shorter than the code's own TTL.
+The frontend's tab (`App.tsx`'s `OtpForm`) and its countdown are display only —
+the server holds the authoritative expiry and budget.
+
+## Output encoding and response shape
+
+There is no HTML rendered anywhere on the server: every route answers
+`application/json` and the account emails are `text/plain`. Escaping therefore
+belongs at the render site, and that is React, which escapes `<`, `>`, `&` and
+quotes in text nodes on its own. Do **not** HTML-escape values on the way into
+the database or into a JSON response: it corrupts the data (a name containing a
+quote would be stored and later exported as `&quot;`) and would still not save a
+sink that opts out of escaping. The guard is that no sink exists —
+`tests/test_security_hardening.py` fails if `dangerouslySetInnerHTML`,
+`innerHTML`, `document.write` or `eval(` appears anywhere under `apps/web/src`.
+
+Every route returns an explicitly built projection, never a serialized ORM row.
+`admin_users._serialize` is the pattern: it lists the fields that leave the
+server, which is what keeps `password_hash` off the wire. Never add a field by
+iterating a model's columns. All database access goes through SQLAlchemy ORM
+constructs, which parameterize; the only `text()` in the codebase is the health
+probe's `SELECT 1` and the two advisory-lock calls, and those bind their key
+rather than formatting it into the statement.
+
 ## Deployment profiles
 
 `RUNTIME_PROFILE` (`local` | `docker`) selects the storage and queue backends via
@@ -209,7 +369,11 @@ overridden directly with `STORAGE_BACKEND` / `QUEUE_BACKEND`.
 - `document_intelligence/storage.py` — `ObjectStorage()` is a factory, not a
   class, returning `FilesystemStorage` (local) or `MinioStorage` (docker) behind
   one interface. Call sites are unchanged. `FilesystemStorage` writes
-  `.partial` then renames, and rejects any key that would escape `STORAGE_ROOT`.
+  `.partial` then renames, and rejects any key that would escape `STORAGE_ROOT`. The two backends mint different URIs (`file:///abs/path` and
+`s3://bucket/key`), so a caller that has to turn a stored `storage_uri` back
+into a key uses `storage.key_from_uri()` rather than string-slicing one scheme's
+prefix — bulk confirm did the latter and answered 500 on every local-profile
+spreadsheet.
 - `workers/local_queue.py` — the in-process runner. It drives the same Celery
   task functions through `_InlineContext`, which supplies the
   `self.request.retries` / `self.max_retries` the task bodies read and turns
@@ -241,6 +405,25 @@ The Person Registry has no equivalent seed script wired into `make seed` — `ap
 - Route handlers stay thin; domain state transitions live in `modules/*/service.py`.
 - Case processing is safe to retry; result/extraction writes use upsert-by-case semantics. This is a per-Case guarantee, not a per-Document one: `Document.case_id` is not schema-unique, so `subject_split.py`'s fan-out can attach multiple Documents to the same originating upload without violating it — what must never happen is more than one `ExtractedRecord`/`VerificationResult` per Case (`VerificationResult.case_id` is DB-unique).
 - Human review uses optimistic concurrency (`expected_version`) plus row locking, and a dismissed review fails the Case closed rather than leaving it `NEED_REVIEW` with no open item.
+- One import creates at most `bulk_max_rows` Cases (default 50). This is a
+  workload cap, not a parser guard — `document_max_spreadsheet_rows` already
+  refuses a file big enough to exhaust memory. It is enforced in
+  `profile_and_validate` before any row is written, so it also covers the
+  re-profile a confirm performs, and its 422 carries `{code, rows, limit,
+  message}` because the web client renders that message verbatim in a blocking
+  dialog. Other `DocumentLimitError` codes keep their bare-code detail shape.
+- Both web upload entry points — selecting a file and pressing the lookup
+  button — must route a `TABULAR_LIST_REQUIRES_BULK` 422 to `/bulk` through
+  `openBulkFromFile`. `handleSearch`'s branch lacked it and showed the operator
+  the raw English server message on every personnel list.
+- `bulk/service.py`'s `refresh_job_counts` locks the job row before recomputing
+  its counters. Row tasks run concurrently and each recomputes the whole job, so
+  an unsynchronised read-modify-write lets the last writer store a pre-peer
+  snapshot and strand the job at `PROCESSING` forever — the local profile has no
+  Beat running `reconcile_bulk_jobs` to finalise it afterwards. `GET /bulk/{id}`
+  also returns each row's decided `organization_type`/`resolution_status`/
+  `workflow_status` under the same names `GET /cases/{id}/subjects` uses, so the
+  web client renders an import's results and a split document's with one list.
 - Registry publish is serialized by an advisory lock; exactly one version stays `PUBLISHED`. The Person Registry has its own separate advisory lock and its own separate single-`PUBLISHED`-version invariant — publishing one registry has no effect on the other.
 - Authorization is checked per request from the database, never from anything the client supplies. `AUTH_DISABLED` is development-only and `Settings.production_guards` refuses to start with it on in production.
 - `audit_logs` is append-only, enforced by PostgreSQL triggers (migration `0004`). Only insert.

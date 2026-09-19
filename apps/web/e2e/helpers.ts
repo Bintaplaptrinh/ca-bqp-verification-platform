@@ -51,6 +51,9 @@ async function ensureReviewerAccount() {
         username: REVIEWER.username,
         position: 'Cán bộ thẩm định',
         department: 'Phòng Kiểm thử',
+        // Required by `UserCreate`: the issued password is mailed there, so the
+        // create call is a 422 without it.
+        email: `${REVIEWER.username}@cabqp.local`,
         permissions: preset,
       },
     });
@@ -59,6 +62,15 @@ async function ensureReviewerAccount() {
       // The account exists with a generated password; set the fixed one the
       // specs use by resetting and then changing it as the account itself.
       const initial = (await created.json()).initial_password;
+      if (!initial) {
+        // By design the API returns the password only when the mail failed —
+        // a delivered password is never echoed back. The specs cannot read a
+        // mailbox, so provisioning needs mail switched off for the run.
+        throw new Error(
+          'The issued password was mailed instead of returned, so the E2E reviewer cannot be ' +
+            'provisioned. Run the suite with GMAIL_USER/GMAIL_APP_PASSWORD unset.'
+        );
+      }
       const reviewerToken = await apiLogin(context, REVIEWER.username, initial);
       const changed = await context.post(`${API}/auth/change-password`, {
         headers: { Authorization: `Bearer ${reviewerToken}` },
@@ -94,6 +106,29 @@ export async function signInAs(page: Page, role: TestRole) {
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
   // The header only renders once the session resolves.
   await expect(page.getByRole('button', { name: 'Tra cứu' }).first()).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * A second tab on the *same* session, rather than a second sign-in.
+ *
+ * The backend allows one live session per account (SINGLE_ACTIVE_SESSION), so
+ * signing in again as the same person revokes the first tab's session and the
+ * first tab starts getting 401s. Two tabs sharing one session is what a person
+ * actually does, and it is what the conflict spec needs: identical identity,
+ * two independently stale views.
+ */
+export async function openTabOnSameSession(context: any, page: Page): Promise<Page> {
+  const stored = await page.evaluate(() => sessionStorage.getItem('cabqp.session'));
+  if (!stored) throw new Error('no session to share: sign in on the first page first');
+
+  const next = await context.newPage();
+  // sessionStorage is per-tab and cannot be written before a document exists,
+  // so land on the origin first, seed the token, then boot the app.
+  await next.goto('/');
+  await next.evaluate((value) => sessionStorage.setItem('cabqp.session', value), stored);
+  await next.reload();
+  await expect(next.getByRole('button', { name: 'Tra cứu' }).first()).toBeVisible({ timeout: 30_000 });
+  return next;
 }
 
 export async function submitTextQuery(page: Page, text: string) {

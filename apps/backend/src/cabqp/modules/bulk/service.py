@@ -606,6 +606,14 @@ def _add_error(db: Session, job_id: str, row_index: int, column: str|None, code:
 
 def profile_and_validate(db: Session, job: BulkIngestJob, content: bytes, *, user_mapping: dict|None=None) -> BulkIngestJob:
     headers,rows,first_row=_read_rows(job.file_name,content)
+    # Refuse an oversized list before any row is written, so a rejected import
+    # leaves nothing behind. This is checked here rather than in the route
+    # because confirm re-profiles through the same function: a file that grew
+    # past the cap between upload and confirm must not slip in on the second
+    # call either.
+    row_cap=get_settings().bulk_max_rows
+    if len(rows)>row_cap:
+        raise DocumentLimitError("BULK_ROW_LIMIT_EXCEEDED",rows=len(rows),limit=row_cap)
     inferred,details=infer_mapping(headers,rows)
     mapping=validate_mapping(headers, user_mapping) if user_mapping is not None else inferred
     if user_mapping:
@@ -728,6 +736,25 @@ def process_bulk_row(db: Session, row: BulkIngestRow, job: BulkIngestJob) -> Bul
 
 
 def refresh_job_counts(db: Session, job: BulkIngestJob) -> BulkIngestJob:
+    """Recompute a job's counters and terminal status from its rows.
+
+    Every row task calls this after finishing its own row, and row tasks run
+    concurrently — two inline workers in the local profile, more under Celery.
+    That makes this a read-modify-write over shared state, so it takes the job
+    row's lock first. Without it the aggregate below is a snapshot taken before
+    a peer committed, and the last writer stores counts that omit its peer's
+    row: a job whose rows are *all* terminal then keeps ``PROCESSING`` and a
+    processed count short of its total, forever. Nothing finalises it
+    afterwards in the local profile (there is no Beat running
+    ``reconcile_bulk_jobs``), so the client polls a job that will never finish.
+
+    Locking the job row makes the second caller wait for the first to commit and
+    then re-read committed truth. On SQLite ``with_for_update`` is a no-op, which
+    is correct there: the tests drive rows one at a time.
+    """
+    locked=db.scalar(select(BulkIngestJob).where(BulkIngestJob.id==job.id).with_for_update())
+    if locked is not None:
+        job=locked
     counts=dict(db.execute(select(BulkIngestRow.status,func.count()).where(BulkIngestRow.job_id==job.id).group_by(BulkIngestRow.status)).all())
     job.succeeded=int(counts.get("SUCCEEDED",0)); job.failed=int(counts.get("FAILED",0)); job.skipped=int(counts.get("SKIPPED_DUPLICATE",0))
     job.processed=job.succeeded+job.failed+job.skipped

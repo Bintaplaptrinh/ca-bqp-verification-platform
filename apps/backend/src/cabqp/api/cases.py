@@ -606,3 +606,124 @@ def get_case(
             for a in assessments
         ],
     }
+
+
+def _split_group_key(result: VerificationResult | None) -> tuple[str | None, dict]:
+    """Identify the multi-subject group a Case belongs to, if any.
+
+    Both fan-out paths stamp ``evidence.split_source`` and key every sibling's
+    ``idempotency_key`` as ``f"{group}:{block_index}"`` — the document id when the
+    split happened in the document worker, the originating Case id when it happened
+    on the synchronous text path. Block #0 on the text path keeps the caller's own
+    Idempotency-Key, so it is recovered from ``source_case_id`` rather than the key.
+    """
+    split = ((result.evidence or {}).get("split_source") or {}) if result else {}
+    if not isinstance(split, dict):
+        return None, {}
+    return (split.get("document_id") or split.get("source_case_id")), split
+
+
+@router.get("/{case_id}/subjects")
+def list_case_subjects(
+    case_id: str,
+    db: Session = Depends(get_db),
+    p: Principal = Depends(current_principal),
+):
+    """List every Case produced from the same multi-subject document.
+
+    A single-subject Case answers with exactly itself (``subject_count == 1``), so
+    the client can call this unconditionally and render a list only when the count
+    is greater than one. Each sibling is an independent Case with its own result;
+    this endpoint only enumerates them and never merges or re-decides anything.
+    """
+    c = db.get(Case, case_id)
+    if not c:
+        raise HTTPException(404, "Case not found")
+    _authorize(db, c, p)
+
+    r = db.scalar(select(VerificationResult).where(VerificationResult.case_id == case_id))
+    group_id, split = _split_group_key(r)
+
+    members: list[Case] = [c]
+    if group_id:
+        prefix = f"{group_id}:"
+        for sibling in db.scalars(
+            select(Case).where(
+                Case.created_by == c.created_by,
+                Case.idempotency_key.like(f"{prefix}%"),
+            )
+        ):
+            # LIKE treats "_" as a wildcard and Case/Document ids contain one, so
+            # the prefix is re-checked exactly rather than trusted from SQL.
+            if (sibling.idempotency_key or "").startswith(prefix):
+                members.append(sibling)
+        source_id = split.get("source_case_id")
+        if source_id:
+            source = db.get(Case, source_id)
+            if source is not None:
+                members.append(source)
+
+    unique: dict[str, Case] = {}
+    for m in members:
+        if m.id in unique:
+            continue
+        if m.id != c.id:
+            # A sibling outside this caller's scope is omitted, not leaked.
+            try:
+                _authorize(db, m, p)
+            except HTTPException:
+                continue
+        unique[m.id] = m
+
+    member_ids = list(unique)
+    extracted_by_case = {
+        row.case_id: row
+        for row in db.scalars(select(ExtractedRecord).where(ExtractedRecord.case_id.in_(member_ids)))
+    }
+    result_by_case = {
+        row.case_id: row
+        for row in db.scalars(select(VerificationResult).where(VerificationResult.case_id.in_(member_ids)))
+    }
+
+    def _block_index(case: Case) -> int:
+        res = result_by_case.get(case.id)
+        _, own_split = _split_group_key(res)
+        idx = own_split.get("block_index")
+        if isinstance(idx, int):
+            return idx
+        key = case.idempotency_key or ""
+        if group_id and key.startswith(f"{group_id}:"):
+            suffix = key.split(":")[-1]
+            if suffix.isdigit():
+                return int(suffix)
+        return 0
+
+    items = []
+    for case in unique.values():
+        ex = extracted_by_case.get(case.id)
+        res = result_by_case.get(case.id)
+        items.append(
+            {
+                "case_id": case.id,
+                "block_index": _block_index(case),
+                "subject_name": ex.subject_name if ex else None,
+                "subject_code": ex.subject_code if ex else None,
+                "position": ex.position if ex else None,
+                "current_unit": (res.evidence or {}).get("canonical_name") if res else None,
+                "current_unit_raw": ex.current_unit_raw if ex else None,
+                "organization_type": res.organization_type if res else "UNKNOWN",
+                "resolution_status": res.resolution_status if res else None,
+                "subject_group": res.subject_group if res else None,
+                "workflow_status": case.workflow_status,
+                "created_at": case.created_at,
+            }
+        )
+    items.sort(key=lambda row: (row["block_index"], row["case_id"]))
+
+    return {
+        "group_id": group_id,
+        "document_id": split.get("document_id"),
+        "block_count": split.get("block_count") or len(items),
+        "subject_count": len(items),
+        "items": items,
+    }

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import unicodedata
@@ -30,6 +31,8 @@ from cabqp.shared.settings import get_settings
 
 if TYPE_CHECKING:
     from passwordgen import PasswordGenerator
+
+logger = logging.getLogger(__name__)
 
 PBKDF2_ITERATIONS = 240_000
 _ALGORITHM = "pbkdf2_sha256"
@@ -278,6 +281,20 @@ class AuthError(Exception):
     """Authentication failed. The message is safe to show to the caller."""
 
 
+def record_failed_attempt(db: Session, user: AppUser) -> None:
+    """Charge one failure against an account, locking it out at the cap.
+
+    Shared by password and one-time-code sign-in: a code-guessing run must cost
+    an account the same as a password-guessing run, or the new endpoint would be
+    a way around the lockout.
+    """
+    user.failed_attempts = (user.failed_attempts or 0) + 1
+    if user.failed_attempts >= MAX_FAILED_ATTEMPTS:
+        user.locked_until = utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+        user.failed_attempts = 0
+    db.flush()
+
+
 def authenticate(
     db: Session,
     username: str,
@@ -288,29 +305,66 @@ def authenticate(
 ) -> tuple[AppUser, str, datetime]:
     """Verify credentials and open a session. Returns (user, token, expires_at)."""
     user = db.get(AppUser, (username or "").strip().lower())
-    now = utcnow()
 
     if user is None:
         # Spend comparable time on an unknown account so response timing does
         # not tell an attacker which usernames exist.
         verify_password(password or "", hash_password("decoy"))
+    usable_account(user)
+    assert user is not None  # usable_account raises on None; this is for mypy
+
+    if not verify_password(password or "", user.password_hash):
+        record_failed_attempt(db, user)
+        raise AuthError("Tên đăng nhập hoặc mật khẩu không đúng")
+
+    return open_session(db, user, user_agent=user_agent, client_ip=client_ip)
+
+
+def usable_account(user: AppUser | None) -> None:
+    """Raise if this account cannot sign in right now, whatever the method.
+
+    Shared by password and one-time-code sign-in so a deactivated or locked-out
+    account cannot be let in through the newer door.
+    """
+    if user is None:
         raise AuthError("Tên đăng nhập hoặc mật khẩu không đúng")
     if not user.is_active:
         raise AuthError("Tài khoản đã bị khóa. Liên hệ quản trị viên.")
-    if user.locked_until and user.locked_until > now:
+    if user.locked_until and user.locked_until > utcnow():
         raise AuthError("Tài khoản tạm khóa do đăng nhập sai nhiều lần. Thử lại sau ít phút.")
 
-    if not verify_password(password or "", user.password_hash):
-        user.failed_attempts = (user.failed_attempts or 0) + 1
-        if user.failed_attempts >= MAX_FAILED_ATTEMPTS:
-            user.locked_until = now + timedelta(minutes=LOCKOUT_MINUTES)
-            user.failed_attempts = 0
-        db.flush()
-        raise AuthError("Tên đăng nhập hoặc mật khẩu không đúng")
 
+def open_session(
+    db: Session,
+    user: AppUser,
+    *,
+    user_agent: str | None = None,
+    client_ip: str | None = None,
+) -> tuple[AppUser, str, datetime]:
+    """Clear the failure counters and issue a session token.
+
+    Every way of signing in ends here, so SINGLE_ACTIVE_SESSION, the lockout
+    reset and the session row have one implementation rather than one per
+    authentication method.
+    """
+    now = utcnow()
     user.failed_attempts = 0
     user.locked_until = None
     user.last_login_at = now
+
+    if get_settings().single_active_session:
+        # One live session per account: signing in here ends every session this
+        # account already holds, so the same credentials cannot be used from two
+        # devices at once and a forgotten sign-in elsewhere stops working the
+        # moment the owner signs in again. Sessions carry no claims and are
+        # re-read from the database per request, so the revocation takes effect
+        # on the other device's very next call.
+        revoked = revoke_all_sessions(db, user.username)
+        if revoked:
+            logger.info(
+                "prior_sessions_revoked_on_login",
+                extra={"event": {"username": user.username, "revoked": revoked}},
+            )
 
     token = secrets.token_urlsafe(32)
     expires_at = now + session_lifetime()

@@ -571,7 +571,13 @@ class PersonRegistryService:
         if rv.status != "APPROVED":
             raise HTTPException(409, "Only APPROVED person registry versions can be published")
         if self.db.bind is not None and self.db.bind.dialect.name == "postgresql":
-            self.db.execute(text(f"SELECT pg_advisory_xact_lock({PERSON_REGISTRY_PUBLISH_LOCK})"))
+            # Bound parameter rather than an f-string: the value is a module
+            # constant today, but SQL assembled by string formatting is the
+            # pattern this codebase does not keep, anywhere.
+            self.db.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": PERSON_REGISTRY_PUBLISH_LOCK},
+            )
         for old in self.db.scalars(
             select(PersonRegistryVersion)
             .where(PersonRegistryVersion.status == "PUBLISHED")

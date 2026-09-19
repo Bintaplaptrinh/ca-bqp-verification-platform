@@ -37,6 +37,36 @@ def _safe_relative(key: str) -> PurePosixPath:
     return candidate
 
 
+def key_from_uri(uri: str) -> str:
+    """Recover the storage key from a URI ``put`` returned.
+
+    The two backends mint different schemes (``s3://bucket/key`` and
+    ``file:///abs/path``), so only this module can read one back. Most callers
+    never need to: ``process_document`` is handed the key alongside the URI.
+    Bulk ingestion is the exception — a confirm request re-reads the source file
+    stored by an earlier request, and the key it used is not carried anywhere
+    else. Splitting on the MinIO prefix alone, as that call site used to, left a
+    ``file://`` URI intact and ``_safe_relative`` then rejected its ``file:``
+    segment, so every confirm-with-mapping on the local profile answered 500.
+    """
+    text = (uri or "").strip()
+    if not text:
+        raise StorageKeyError("Empty storage URI")
+    if text.startswith("s3://"):
+        _bucket, _, key = text[len("s3://") :].partition("/")
+        if not key:
+            raise StorageKeyError("Storage URI names no object")
+        return key
+    if text.startswith("file://"):
+        root = get_settings().storage_path.resolve()
+        try:
+            return Path(text[len("file://") :]).resolve().relative_to(root).as_posix()
+        except ValueError as exc:
+            raise StorageKeyError("Stored path is outside the storage root") from exc
+    # Already a bare key (older rows, and the tests' in-memory doubles).
+    return text
+
+
 class FilesystemStorage:
     """Local-profile store: one file per key under ``STORAGE_ROOT``."""
 

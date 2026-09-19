@@ -20,6 +20,7 @@ export default function OcrResultModal({
   filePreviewUrl,
   extractedData,
   onConfirmBulk,
+  onViewBulk,
   onConfirmAndSearch,
 }) {
   if (!isOpen) return null;
@@ -75,6 +76,7 @@ export default function OcrResultModal({
         data={extractedData}
         onClose={onClose}
         onConfirm={onConfirmBulk}
+        onViewResults={onViewBulk}
       />
     );
   }
@@ -404,7 +406,7 @@ const BULK_FIELDS = [
   ['as_of_date', 'Ngày đánh giá'],
 ];
 
-function BulkResultModal({ file, data, onClose, onConfirm }) {
+function BulkResultModal({ file, data, onClose, onConfirm, onViewResults }) {
   const [mapping, setMapping] = useState(data.mapping || {});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -551,7 +553,11 @@ function BulkResultModal({ file, data, onClose, onConfirm }) {
 
         <div className="px-5 py-4 bg-white border-t border-slate-200 flex justify-between gap-3">
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-md border border-slate-200 font-semibold text-slate-700">Đóng</button>
-          {!alreadyProcessed && (
+          {alreadyProcessed ? (
+            <button type="button" onClick={() => onViewResults?.(data.jobId)} className="px-5 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold">
+              Xem tiến độ và kết quả
+            </button>
+          ) : (
             <button type="button" disabled={submitting} onClick={handleConfirm} className="px-5 py-2 rounded-md bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white font-semibold">
               {submitting ? 'Đang xác nhận' : 'Xác nhận cột và xử lý danh sách'}
             </button>

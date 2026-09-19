@@ -30,7 +30,16 @@ const POLICY_STATUS_LABELS = {
   UNKNOWN: 'Chưa xác định',
 };
 
-function formatScore(value) {
+// The case API expresses matching score and candidate margin on a 0–100 scale.
+// Decision confidence is the exception: it is a probability on a 0–1 scale.
+// Keep the conversions separate so a score such as 98.5 is not rendered as
+// 9,850% while a confidence such as 0.985 is still rendered as 99%.
+function formatPercentage(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 'Chưa có';
+  return `${Math.round(value)}%`;
+}
+
+function formatProbability(value) {
   if (typeof value !== 'number' || Number.isNaN(value)) return 'Chưa có';
   return `${Math.round(value * 100)}%`;
 }
@@ -88,19 +97,19 @@ export default function DetailedComparisonModal({ isOpen, onClose, caseDetail })
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4 p-3.5 sm:p-6 bg-slate-50 border-b border-slate-200 text-[13px] flex-shrink-0">
           <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
             <span className="text-slate-500 text-[12px] block">Mức độ phù hợp</span>
-            <span className="text-[20px] font-bold text-emerald-600 block mt-0.5">{formatScore(result.score)}</span>
+            <span className="text-[20px] font-bold text-emerald-600 block mt-0.5">{formatPercentage(result.score)}</span>
             <span className="text-[11px] text-slate-400">{MATCH_METHOD_LABELS[result.match_method] || 'Đối chiếu tự động'}</span>
           </div>
 
           <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
             <span className="text-slate-500 text-[12px] block">Độ tin cậy quyết định</span>
-            <span className="text-[20px] font-bold text-red-600 block mt-0.5">{formatScore(result.decision_confidence)}</span>
+            <span className="text-[20px] font-bold text-red-600 block mt-0.5">{formatProbability(result.decision_confidence)}</span>
             <span className="text-[11px] text-slate-400">Phiên bản danh mục: {result.registry_version || 'Chưa có'}</span>
           </div>
 
           <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
             <span className="text-slate-500 text-[12px] block">Chênh lệch kết quả</span>
-            <span className="text-[20px] font-bold text-slate-900 block mt-0.5">{formatScore(result.margin)}</span>
+            <span className="text-[20px] font-bold text-slate-900 block mt-0.5">{formatPercentage(result.margin)}</span>
             <span className="text-[11px] text-slate-400">Khoảng cách với ứng viên thứ 2</span>
           </div>
 

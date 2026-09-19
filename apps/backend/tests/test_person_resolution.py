@@ -324,6 +324,63 @@ CCCD: 001082946222
         db.close()
 
 
+def test_api_case_subjects_lists_the_whole_split_group():
+    """Every Case in a multi-subject document can enumerate its siblings.
+
+    The frontend shows a roster of names for such a document instead of the first
+    person's verdict, so each member has to answer with the same ordered group,
+    and a single-subject Case has to answer with exactly itself.
+    """
+    from fastapi.testclient import TestClient
+
+    from cabqp.main import app
+    from cabqp.shared.db import get_db
+
+    db = db_session()
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        client = TestClient(app)
+        created = client.post(
+            "/api/v1/cases/text",
+            json={"text": """Họ và tên: Nguyễn Văn Một
+CCCD: 001082946111
+Đơn vị công tác: Cục Kỹ thuật
+
+Họ và tên: Trần Thị Hai
+CCCD: 001082946222
+Đơn vị công tác: Cục Chính trị"""},
+        )
+        assert created.status_code == 200, created.text
+        case_ids = created.json()["case_ids"]
+        assert len(case_ids) == 2
+
+        for case_id in case_ids:
+            listed = client.get(f"/api/v1/cases/{case_id}/subjects")
+            assert listed.status_code == 200, listed.text
+            group = listed.json()
+            assert group["subject_count"] == 2
+            assert [row["block_index"] for row in group["items"]] == [0, 1]
+            assert [row["case_id"] for row in group["items"]] == case_ids
+            assert [row["subject_name"] for row in group["items"]] == [
+                "Nguyễn Văn Một",
+                "Trần Thị Hai",
+            ]
+
+        single = client.post("/api/v1/cases/text", json={"text": "Họ và tên: Lê Văn Đơn"})
+        assert single.status_code == 200, single.text
+        solo = client.get(f"/api/v1/cases/{single.json()['case_id']}/subjects")
+        assert solo.status_code == 200, solo.text
+        assert solo.json()["subject_count"] == 1
+        assert solo.json()["items"][0]["case_id"] == single.json()["case_id"]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        db.close()
+
+
 def test_person_registry_qa_publish_snapshot_roundtrip():
     from cabqp.modules.person_resolution.registry_service import PersonRegistryService
     from cabqp.shared.models import PersonRegistrySnapshot

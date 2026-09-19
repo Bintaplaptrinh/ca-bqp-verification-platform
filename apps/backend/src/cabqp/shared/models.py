@@ -824,3 +824,34 @@ class UserSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(300), nullable=True)
     client_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class LoginOtp(Base):
+    """A one-time sign-in code that was mailed to an account's address.
+
+    Only the code's PBKDF2 hash is stored, for the same reason session tokens
+    are stored hashed: a database read must not hand over a live credential.
+    The row is the whole state of one challenge — its expiry, how many wrong
+    guesses it has absorbed, and whether it was spent — so verification is a
+    single locked row update rather than a rule spread across services.
+
+    Rows are kept after they are consumed or expire: they are what the per
+    account and per address issuance budgets are counted from, which is the
+    control that stops this endpoint being used to spam somebody's mailbox.
+    ``purge_expired_otps`` clears them out well after both windows have passed.
+    """
+
+    __tablename__ = "login_otps"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: uid("otp"))
+    username: Mapped[str] = mapped_column(
+        ForeignKey("app_users.username", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+    client_ip: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    user_agent: Mapped[str | None] = mapped_column(String(300), nullable=True)

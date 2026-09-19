@@ -1,4 +1,6 @@
+import logging
 from functools import lru_cache
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from pathlib import Path
 
 from pydantic import model_validator
@@ -41,17 +43,37 @@ class Settings(BaseSettings):
     session_hours: int = 12
 
     # Outgoing mail. An issued password is delivered by email, so this is a
-    # dependency of account creation, not a nicety. With SMTP_HOST unset the
-    # sender writes the message to MAIL_OUTBOX_DIR as .eml instead — that keeps
-    # the flow demonstrable offline and is refused in production below.
-    smtp_host: str | None = None
-    smtp_port: int = 587
-    smtp_username: str | None = None
-    smtp_password: str | None = None
-    smtp_use_tls: bool = True
+    # dependency of account creation, not a nicety. The only transport is Gmail
+    # SMTP authenticated with a Google app password; the self-hosted SMTP host
+    # settings and the offline .eml file writer were removed, so a deployment
+    # cannot point issued passwords at an unauthenticated relay or leave them in
+    # a local directory. The host/port are not configurable on purpose.
+    gmail_user: str | None = None
+    gmail_app_password: str | None = None
+    gmail_smtp_host: str = "smtp.gmail.com"
+    gmail_smtp_port: int = 587
     smtp_timeout_seconds: float = 15.0
-    mail_from: str = "CA/BQP Verification Platform <no-reply@cabqp.local>"
-    mail_outbox_dir: str = ".local/mail"
+    # Gmail rewrites a From it does not own, so only the display name in front
+    # of GMAIL_USER is configurable.
+    mail_from_name: str = "Hệ thống tra cứu CA/BQP"
+
+    # One-time sign-in codes, mailed to the account's own address. Every knob
+    # here is a spam control, so the defaults are the conservative end:
+    #   ttl / length / attempts  — how much a single challenge is worth to guess
+    #   cooldown + per-hour caps — how much mail one account or one address can
+    #                              cause, which is the abuse this endpoint
+    #                              invites (the attacker's target is someone
+    #                              else's inbox, not our session table).
+    # The feature turns itself off when mail is not configured; there is no
+    # profile in which a code can be issued without being sent somewhere.
+    otp_login_enabled: bool = True
+    otp_ttl_seconds: int = 60
+    otp_code_length: int = 6
+    otp_max_attempts: int = 5
+    otp_resend_cooldown_seconds: int = 60
+    otp_max_per_account_per_hour: int = 5
+    otp_max_per_ip_per_hour: int = 20
+    otp_retention_hours: int = 24
 
     resolver_fuzzy_threshold: float = 91.0
     resolver_margin_threshold: float = 6.0
@@ -121,6 +143,11 @@ class Settings(BaseSettings):
     quality_entropy_min: float = 3.50
     quality_image_blur_variance_min: float = 50.0
     quality_image_contrast_std_min: float = 12.0
+    # How many people one import may create Cases for. This is a workload cap,
+    # not a parser guard: `document_max_spreadsheet_rows` already stops a file
+    # large enough to exhaust memory, while this bounds what a single operator
+    # request queues onto the worker and what the result screen has to show.
+    bulk_max_rows: int = 50
     bulk_auto_map_threshold: float = 0.90
     bulk_ocr_table_confidence_min: float = 0.80
     bulk_header_alias_min: float = 0.75
@@ -133,6 +160,27 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 120
     rate_limit_fail_open: bool = True
+    # A single client gets its own budget per route shape (above) *and* one across
+    # every route (below). Without the second one, a flood just sprays requests
+    # over many paths and stays under the per-route limit on each of them.
+    rate_limit_ip_per_minute: int = 600
+    # Credential endpoints are far cheaper to abuse than they are to use: a person
+    # signs in once, a password sprayer signs in continuously.
+    rate_limit_auth_per_minute: int = 10
+    # X-Forwarded-For is client-supplied unless a proxy we control wrote it. Only
+    # peers listed here may set the address the limiter and audit log record;
+    # anyone else is rate-limited by the socket address they actually connect from.
+    trusted_proxy_ips: str = ""
+
+    # Response hardening. Frame embedding is refused outright: nothing in this
+    # platform is meant to be rendered inside another site's page.
+    security_headers_enabled: bool = True
+    frame_ancestors: str = "'none'"
+    hsts_max_age_seconds: int = 31536000
+
+    # One live session per account. A second sign-in ends the first, so an account
+    # cannot be shared across devices or left signed in on a machine walked away from.
+    single_active_session: bool = True
 
     clamav_host: str = "localhost"
     clamav_port: int = 3310
@@ -165,14 +213,14 @@ class Settings(BaseSettings):
         return "inline" if self.is_local_profile else "celery"
 
     @property
-    def mail_transport(self) -> str:
-        """"smtp" once a host is configured, otherwise the offline file writer."""
-        return "smtp" if (self.smtp_host or "").strip() else "file"
+    def mail_configured(self) -> bool:
+        """Both halves of the Gmail app-password credential are present."""
+        return bool((self.gmail_user or "").strip() and (self.gmail_app_password or "").strip())
 
     @property
-    def mail_outbox_path(self) -> Path:
-        path = Path(self.mail_outbox_dir)
-        return path if path.is_absolute() else Path.cwd() / path
+    def otp_login_available(self) -> bool:
+        """OTP sign-in is offered only when a code can actually be delivered."""
+        return bool(self.otp_login_enabled and self.mail_configured)
 
     @property
     def storage_path(self) -> Path:
@@ -199,11 +247,26 @@ class Settings(BaseSettings):
                 raise ValueError("Production requires antimalware scanning in fail-closed mode")
             if not self.rate_limit_enabled:
                 raise ValueError("Production requires API rate limiting")
-            if self.mail_transport != "smtp":
+            if not self.security_headers_enabled:
+                raise ValueError("Production requires the security response headers")
+            if not self.mail_configured:
                 raise ValueError(
-                    "Production requires SMTP_HOST: issued passwords are delivered by email, "
-                    "and the offline file transport would leave them in a local directory"
+                    "Production requires GMAIL_USER and GMAIL_APP_PASSWORD: issued passwords "
+                    "are delivered by email and there is no other transport"
                 )
+        if self.otp_login_enabled:
+            if not 20 <= self.otp_ttl_seconds <= 900:
+                raise ValueError("OTP_TTL_SECONDS must be between 20 and 900")
+            if not 6 <= self.otp_code_length <= 10:
+                raise ValueError("OTP_CODE_LENGTH must be between 6 and 10")
+            if not 1 <= self.otp_max_attempts <= 10:
+                raise ValueError("OTP_MAX_ATTEMPTS must be between 1 and 10")
+            # A cooldown shorter than the code's own lifetime would let one
+            # caller queue a new message for every second the last one is valid.
+            if self.otp_resend_cooldown_seconds < self.otp_ttl_seconds:
+                raise ValueError("OTP_RESEND_COOLDOWN_SECONDS must be at least OTP_TTL_SECONDS")
+            if self.otp_max_per_account_per_hour < 1 or self.otp_max_per_ip_per_hour < 1:
+                raise ValueError("OTP per-hour caps must be at least 1")
         if self.runtime_profile.casefold() not in {"local", "docker"}:
             raise ValueError("RUNTIME_PROFILE must be 'local' or 'docker'")
         if self.storage_backend not in {"auto", "filesystem", "minio"}:
@@ -228,6 +291,7 @@ class Settings(BaseSettings):
             "DOCUMENT_MAX_TABLES": self.document_max_tables,
             "DOCUMENT_MAX_WORKSHEETS": self.document_max_worksheets,
             "DOCUMENT_MAX_SPREADSHEET_ROWS": self.document_max_spreadsheet_rows,
+            "BULK_MAX_ROWS": self.bulk_max_rows,
             "DOCUMENT_SOFT_TIMEOUT_SECONDS": self.document_soft_timeout_seconds,
         }
         for name, value in positive_limits.items():
@@ -244,7 +308,37 @@ class Settings(BaseSettings):
                 raise ValueError(f"{name} must be between 0 and 1")
         if self.rate_limit_per_minute <= 0:
             raise ValueError("RATE_LIMIT_PER_MINUTE must be positive")
+        if self.rate_limit_ip_per_minute <= 0:
+            raise ValueError("RATE_LIMIT_IP_PER_MINUTE must be positive")
+        if self.rate_limit_auth_per_minute <= 0:
+            raise ValueError("RATE_LIMIT_AUTH_PER_MINUTE must be positive")
         return self
+
+    @property
+    def trusted_proxies(self) -> tuple[IPv4Network | IPv6Network, ...]:
+        """Proxy addresses allowed to name the client, as networks.
+
+        A bare address is accepted and read as a single-host network, so
+        "10.0.0.7" and "172.16.0.0/12" are both valid entries. A container
+        network assigns the reverse proxy its address dynamically, which is why
+        a range has to be expressible at all: pinning one address would leave
+        every request looking like it came from an untrusted peer after a
+        restart, collapsing every user into one rate-limit bucket.
+        """
+        networks: list[IPv4Network | IPv6Network] = []
+        for raw in self.trusted_proxy_ips.split(","):
+            entry = raw.strip()
+            if not entry:
+                continue
+            try:
+                networks.append(ip_network(entry, strict=False))
+            except ValueError:
+                # A malformed entry must not silently widen trust, and must not
+                # take the process down either; it is dropped and reported.
+                logging.getLogger(__name__).warning(
+                    "invalid_trusted_proxy_entry", extra={"event": {"entry": entry}}
+                )
+        return tuple(networks)
 
 
 @lru_cache

@@ -149,11 +149,6 @@ def _credential_response(user: AppUser, plaintext: str, delivery) -> dict:
             f"Mật khẩu đã được gửi tới {user.email}. "
             "Hệ thống không hiển thị lại mật khẩu; nếu cán bộ không nhận được, hãy cấp lại."
         )
-        if delivery.transport == "file":
-            payload["notice"] += (
-                " Lưu ý: hệ thống đang chạy không có máy chủ thư, thư được ghi ra thư mục "
-                "MAIL_OUTBOX_DIR thay vì gửi đi thật."
-            )
     else:
         payload["initial_password"] = plaintext
         payload["notice"] = (

@@ -87,7 +87,8 @@ function buildCaseResultFromDetail(caseId, caseDetail) {
     subject_group_confidence: res?.evidence?.subject_group_confidence ?? null,
     taxonomy_version: res?.taxonomy_version || null,
     salary_status: caseDetail?.salary_status || 'Không đủ dữ liệu',
-    score: res?.score ? `${Math.round(res.score * 100)}%` : 'Chưa có',
+    // Case-resolution scores from the API are already percentages (0–100).
+    score: typeof res?.score === 'number' ? `${Math.round(res.score)}%` : 'Chưa có',
     evidence: res?.evidence || [],
     topCandidates: Array.isArray(res?.top_candidates) ? res.top_candidates : [],
     eligibility: Array.isArray(caseDetail?.eligibility) ? caseDetail.eligibility : [],
@@ -298,6 +299,22 @@ export default function CABQPVerification({ user, onLogout }) {
   const [correctedFields, setCorrectedFields] = useState([]);
   const [isOcrModalOpen, setIsOcrModalOpen] = useState(false);
   const [uploadMessage, setUploadMessage] = useState(null);
+  // Multi-subject documents: one Case per person already exists on the server
+  // (the document worker / text endpoint fans out). This holds that group so the
+  // screen can list the people first and only load a full result when one is
+  // picked. Null means the current lookup produced a single subject.
+  const [subjectGroup, setSubjectGroup] = useState(null);
+  const [selectedSubjectId, setSelectedSubjectId] = useState(null);
+  // A confirmed spreadsheet import runs on the worker, one Case per row. This
+  // holds the job while it is in flight so the screen can show real progress
+  // read from GET /bulk/{id} — counts the server reports, never a fake timer —
+  // and then hand the finished rows to the same list view a multi-subject
+  // document uses. Null means no import is being watched.
+  const [bulkJob, setBulkJob] = useState(null);
+  // A list the server refused as too long. Held separately from `apiError`
+  // because the operator has to be stopped and told to split the file, not left
+  // to notice a line of red text under a form they are still filling in.
+  const [bulkLimitError, setBulkLimitError] = useState(null);
   const mainFileInputRef = useRef(null);
   const sidebarFileInputRef = useRef(null);
 
@@ -508,6 +525,10 @@ export default function CABQPVerification({ user, onLogout }) {
     if (!item?.id) return;
     setApiError(null);
     setCurrentNav('search');
+    // A history pick is its own single Case, not a member of the last document's
+    // group; keeping the group would leave a stale "Danh sách N đối tượng" button.
+    setSubjectGroup(null);
+    setSelectedSubjectId(null);
     setAppState('loading');
     try {
       const detailRes = await axios.get(`/api/v1/cases/${item.id}`, { timeout: 5000 });
@@ -529,6 +550,235 @@ export default function CABQPVerification({ user, onLogout }) {
       );
       setAppState('initial');
     }
+  };
+
+  // A multi-subject document is a group of independent Cases on the server, one
+  // per person. This reads that group so the screen can show the list of names
+  // first; every Case answers the endpoint, and a single-subject lookup simply
+  // comes back with subject_count === 1.
+  const loadSubjectGroup = useCallback(async (caseId, sourceLabel) => {
+    const res = await axios.get(`/api/v1/cases/${caseId}/subjects`, { timeout: 10000 });
+    const data = res.data || {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (items.length <= 1) return null;
+    return {
+      groupId: data.group_id || caseId,
+      subjectCount: data.subject_count || items.length,
+      sourceLabel: sourceLabel || '',
+      items,
+    };
+  }, []);
+
+  // Open one person out of the list. The detail is the real GET /cases/{id}
+  // response for that person's own Case, exactly as a single-subject lookup
+  // would load it; nothing is derived from the list row.
+  const handleSelectSubject = async (caseId) => {
+    if (!caseId) return;
+    setApiError(null);
+    setSelectedSubjectId(caseId);
+    setAppState('loading');
+    try {
+      const detailRes = await axios.get(`/api/v1/cases/${caseId}`, { timeout: 8000 });
+      const caseDetail = detailRes.data;
+      const extracted = caseDetail.extracted || {};
+      setFormValues((prev) => ({
+        ...prev,
+        fullName: caseDetail.subject?.name || extracted.subject_name || '',
+        position: extracted.position || '',
+        department: extracted.current_unit_raw || '',
+        identifier: extracted.subject_code || '',
+      }));
+      setCorrectedFields([]);
+      setCurrentCaseData(buildCaseResultFromDetail(caseId, caseDetail));
+      setAppState(resolvedStateFromDetail(caseDetail));
+    } catch (err) {
+      setApiError(
+        err?.response?.data?.detail?.message || err?.response?.data?.detail || 'Không tải được hồ sơ của đối tượng đã chọn.'
+      );
+      setAppState('subject-list');
+    }
+  };
+
+  /**
+   * Did `/cases/file` refuse this upload because it is a personnel list?
+   *
+   * A table with a real record header is a different pipeline entirely: the
+   * single-Case endpoint answers 422 `TABULAR_LIST_REQUIRES_BULK` and the
+   * client is expected to resend it to `/bulk`. Treating that as a plain error
+   * showed the operator the raw English server message.
+   */
+  const isTabularListError = (error) => {
+    const detail = error?.response?.data?.detail || '';
+    const detailText = typeof detail === 'string' ? detail : JSON.stringify(detail);
+    return (
+      error?.response?.status === 422 &&
+      (detail?.code === 'TABULAR_LIST' ||
+        /TABULAR_LIST|multi-row tabular list|\/api\/v1\/bulk/i.test(detailText))
+    );
+  };
+
+  /** The server's row-cap rejection, if that is what this error is. */
+  const rowLimitRejection = (error) => {
+    const detail = error?.response?.data?.detail;
+    if (error?.response?.status !== 422 || detail?.code !== 'BULK_ROW_LIMIT_EXCEEDED') return null;
+    return { rows: detail.rows, limit: detail.limit, message: detail.message };
+  };
+
+  /**
+   * Send a personnel list to bulk ingestion and open its mapping review.
+   *
+   * Shared by both upload entry points — selecting a file and pressing the
+   * lookup button — so neither can drift into handling a list differently.
+   * Returns true when the list was accepted.
+   */
+  const openBulkFromFile = useCallback(async (file) => {
+    const bulkForm = new FormData();
+    bulkForm.append('file', file);
+    let bulkRes;
+    try {
+      bulkRes = await axios.post('/api/v1/bulk', bulkForm, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      });
+    } catch (error) {
+      const rejection = rowLimitRejection(error);
+      if (!rejection) throw error;
+      setBulkLimitError({ ...rejection, fileName: file?.name || '' });
+      return false;
+    }
+    const bulkDetail = bulkRes.data?.duplicate_file
+      ? (await axios.get(`/api/v1/bulk/${bulkRes.data.job_id}`)).data
+      : null;
+    setExtractedData({
+      isBulk: true,
+      jobId: bulkRes.data.job_id,
+      status: bulkDetail?.job?.status || bulkRes.data.status,
+      profile: bulkRes.data.profile || null,
+      validation: bulkRes.data.validation || bulkDetail?.job?.validation || {},
+      mapping: bulkRes.data.mapping || bulkDetail?.job?.mapping || {},
+      job: bulkDetail?.job || null,
+      rows: bulkDetail?.rows || bulkRes.data.rows || [],
+      errors: bulkDetail?.errors || [],
+      duplicateFile: Boolean(bulkRes.data.duplicate_file),
+    });
+    setUploadMessage(`Đã nhận diện bảng danh sách: ${file.name}`);
+    setIsOcrModalOpen(true);
+    return true;
+  }, []);
+
+  // --- Spreadsheet import (danh sách nhiều dòng) -----------------------------
+  //
+  // Confirming the column mapping only queues the job; the rows are processed by
+  // the worker afterwards. Everything below watches that job through the real
+  // GET /bulk/{id} and shows what the server reports. Nothing here estimates
+  // progress or invents a row outcome.
+
+  const BULK_TERMINAL = ['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED'];
+
+  /**
+   * Turn finished import rows into the same group shape a multi-subject document
+   * produces, so one list component renders both.
+   *
+   * Only rows that actually became a Case are listed: a row that failed
+   * validation or was skipped as a duplicate has no result to open, and is
+   * reported in the summary above the list instead of being shown as a person
+   * with an empty verdict.
+   */
+  const bulkGroupFromRows = useCallback((job, rows, fileName) => {
+    const items = (rows || [])
+      .filter((row) => row.case_id)
+      .map((row, index) => ({
+        case_id: row.case_id,
+        block_index: index,
+        subject_name: row.subject_name,
+        subject_code: row.subject_code,
+        position: row.position,
+        current_unit: row.current_unit,
+        current_unit_raw: row.unit_name,
+        organization_type: row.organization_type || 'UNKNOWN',
+        resolution_status: row.resolution_status,
+        workflow_status: row.workflow_status,
+      }));
+    return {
+      groupId: job?.id || null,
+      subjectCount: items.length,
+      sourceLabel: fileName || 'danh sách đã tải lên',
+      items,
+    };
+  }, []);
+
+  const watchBulkJob = useCallback((jobId, fileName) => {
+    if (!jobId) return;
+    setApiError(null);
+    setSubjectGroup(null);
+    setSelectedSubjectId(null);
+    setCurrentCaseData(null);
+    setCurrentNav('search');
+    setBulkJob({ jobId, fileName: fileName || '', job: null, rows: [], errors: [], status: 'QUEUED' });
+    setAppState('bulk-processing');
+  }, []);
+
+  // Poll only while a job is actually being watched and has not finished. The
+  // interval is cleared on every dependency change, so leaving the screen or
+  // reaching a terminal status stops the requests rather than leaking a timer.
+  useEffect(() => {
+    const jobId = bulkJob?.jobId;
+    if (!jobId || appState !== 'bulk-processing') return undefined;
+
+    let cancelled = false;
+    let timer = null;
+
+    const poll = async () => {
+      try {
+        const res = await axios.get(`/api/v1/bulk/${jobId}`, { timeout: 10000 });
+        if (cancelled) return;
+        const job = res.data?.job || null;
+        const rows = res.data?.rows || [];
+        const errors = res.data?.errors || [];
+        setBulkJob((prev) => (prev && prev.jobId === jobId ? { ...prev, job, rows, errors, status: job?.status } : prev));
+        if (BULK_TERMINAL.includes(job?.status)) {
+          setSubjectGroup(bulkGroupFromRows(job, rows, bulkJob?.fileName));
+          setAppState('subject-list');
+          return;
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setApiError(
+          err?.response?.data?.detail?.message ||
+            err?.response?.data?.detail ||
+            'Không đọc được tiến độ xử lý danh sách.'
+        );
+        setAppState('initial');
+        return;
+      }
+      timer = setTimeout(poll, 2000);
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bulkJob?.jobId, appState, bulkGroupFromRows]);
+
+  const handleBackToSubjectList = () => {
+    setSelectedSubjectId(null);
+    setCurrentCaseData(null);
+    setApiError(null);
+    setAppState('subject-list');
+  };
+
+  // "Tra cứu mới" leaves the group behind entirely; keeping it would let a fresh
+  // single-subject lookup inherit the previous document's list of people.
+  const startNewLookup = () => {
+    setSubjectGroup(null);
+    setSelectedSubjectId(null);
+    // Leaving the group behind has to drop the import summary with it, or a
+    // fresh lookup keeps reporting the previous spreadsheet's row counts.
+    setBulkJob(null);
+    setApiError(null);
+    setAppState('initial');
   };
 
   const handleClearHistory = () => {
@@ -594,44 +844,11 @@ export default function CABQPVerification({ user, onLogout }) {
           timeout: 120000,
         });
       } catch (uploadError) {
-        const detail = uploadError?.response?.data?.detail || '';
-        const detailText =
-          typeof detail === 'string' ? detail : JSON.stringify(detail);
-        const isTabularList =
-          uploadError?.response?.status === 422 &&
-          (
-            detail?.code === 'TABULAR_LIST' ||
-            /TABULAR_LIST|multi-row tabular list|\/api\/v1\/bulk/i.test(detailText)
-          );
-        if (!isTabularList) {
+        if (!isTabularListError(uploadError)) {
           throw uploadError;
         }
-
-        const bulkForm = new FormData();
-        bulkForm.append('file', file);
-        const bulkRes = await axios.post('/api/v1/bulk', bulkForm, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 120000,
-        });
-        const bulkDetail = bulkRes.data?.duplicate_file
-          ? (await axios.get(`/api/v1/bulk/${bulkRes.data.job_id}`)).data
-          : null;
-        const bulkData = {
-          isBulk: true,
-          jobId: bulkRes.data.job_id,
-          status: bulkDetail?.job?.status || bulkRes.data.status,
-          profile: bulkRes.data.profile || null,
-          validation: bulkRes.data.validation || bulkDetail?.job?.validation || {},
-          mapping: bulkRes.data.mapping || bulkDetail?.job?.mapping || {},
-          job: bulkDetail?.job || null,
-          rows: bulkDetail?.rows || bulkRes.data.rows || [],
-          errors: bulkDetail?.errors || [],
-          duplicateFile: Boolean(bulkRes.data.duplicate_file),
-        };
         setIsExtracting(false);
-        setExtractedData(bulkData);
-        setUploadMessage(`Đã nhận diện bảng danh sách: ${file.name}`);
-        setIsOcrModalOpen(true);
+        await openBulkFromFile(file);
         return;
       }
       const caseId = uploadRes?.data?.case_id;
@@ -690,6 +907,34 @@ export default function CABQPVerification({ user, onLogout }) {
       setIsExtracting(false);
       setExtractedData(extracted);
       setPendingCaseId(caseId);
+
+      if (isMultiSubject && !failed) {
+        // The siblings were created and processed inside the same worker
+        // transaction as this block, so the whole group is already readable.
+        // Show the roster of people instead of one person's detail, and skip the
+        // OCR review modal: there is no single extraction to confirm here.
+        let group = null;
+        try {
+          group = await loadSubjectGroup(caseId, file.name);
+        } catch (groupErr) {
+          group = null;
+        }
+        if (group) {
+          setSubjectGroup(group);
+          setSelectedSubjectId(null);
+          setCurrentCaseData(null);
+          setUploadMessage(
+            `Tài liệu "${file.name}" có ${group.subjectCount} đối tượng. Chọn từng tên để xem kết quả chi tiết.`
+          );
+          setCurrentNav('search');
+          setAppState('subject-list');
+          syncHistoryFromBackend();
+          return;
+        }
+      }
+
+      setSubjectGroup(null);
+      setSelectedSubjectId(null);
       setFormValues((prev) => ({
         ...prev,
         fullName: extracted.fullName || prev.fullName,
@@ -702,14 +947,14 @@ export default function CABQPVerification({ user, onLogout }) {
         failed
           ? `Xử lý tài liệu thất bại: ${file.name}`
           : isMultiSubject
-            ? `Tài liệu "${file.name}" có ${blockCount} người. Hệ thống đã tách thành ${blockCount} hồ sơ riêng biệt. Xem tại mục Lịch sử.`
+            ? `Tài liệu "${file.name}" có ${blockCount} người. Hệ thống đã tách thành ${blockCount} hồ sơ riêng biệt, xem tại mục Lịch sử.`
             : `Đã xử lý tài liệu: ${file.name}`
       );
       setIsOcrModalOpen(true);
       if (isMultiSubject) {
-        // Sibling cases already exist in the backend by the time this one's polling
-        // finished; pull them into history now so "Lịch sử" doesn't require a manual
-        // refresh to reveal the other people found in this document.
+        // Reached only when the group could not be listed (the branch above
+        // returns otherwise). Sibling cases still exist in the backend, so pull
+        // them into history rather than leaving them invisible.
         syncHistoryFromBackend();
       }
     } catch (err) {
@@ -803,12 +1048,17 @@ export default function CABQPVerification({ user, onLogout }) {
     setApiError(null);
     setAppState('loading');
     setCurrentNav('search');
+    setSubjectGroup(null);
+    setSelectedSubjectId(null);
 
     const startTime = Date.now();
 
     // 1. Try real FastAPI backend API if available
     try {
       let caseId = null;
+      // Reported by POST /cases/text when the submitted text held more than one
+      // "Họ và tên" block and the server split it into independent Cases.
+      let reportedSubjects = 1;
 
       const idempotency = () => ({
         'Idempotency-Key': `web-${Date.now()}-${Math.random().toString(36).substring(7)}`,
@@ -824,6 +1074,7 @@ export default function CABQPVerification({ user, onLogout }) {
           { headers: idempotency(), timeout: 30000 }
         );
         caseId = response?.data?.case_id;
+        reportedSubjects = response?.data?.subject_count || 1;
         setCorrectedFields(response?.data?.corrected_fields || []);
       } else if (isCurrentUpload && uploadedFile && pendingCaseId) {
         // The file was already uploaded and OCR'd when it was selected
@@ -837,10 +1088,22 @@ export default function CABQPVerification({ user, onLogout }) {
         if (values.birthYear) {
           formData.append('as_of_date', `${values.birthYear}-01-01`);
         }
-        const response = await axios.post(`/api/v1/cases/file`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data', ...idempotency() },
-          timeout: 120000,
-        });
+        let response;
+        try {
+          response = await axios.post(`/api/v1/cases/file`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data', ...idempotency() },
+            timeout: 120000,
+          });
+        } catch (uploadError) {
+          // A personnel list belongs to bulk ingestion, exactly as it does when
+          // the file is first selected. Without this branch the operator saw the
+          // server's raw English 422 ("Detected a multi-row tabular list...")
+          // every time they pressed the lookup button on a list.
+          if (!isTabularListError(uploadError)) throw uploadError;
+          await openBulkFromFile(uploadedFile);
+          setAppState('initial');
+          return;
+        }
         caseId = response?.data?.case_id;
         setCorrectedFields([]);
       } else if (usingForm) {
@@ -849,6 +1112,7 @@ export default function CABQPVerification({ user, onLogout }) {
           timeout: 30000,
         });
         caseId = response?.data?.case_id;
+        reportedSubjects = response?.data?.subject_count || 1;
         setCorrectedFields([]);
       } else {
         const response = await axios.post(
@@ -857,6 +1121,7 @@ export default function CABQPVerification({ user, onLogout }) {
           { headers: idempotency(), timeout: 30000 }
         );
         caseId = response?.data?.case_id;
+        reportedSubjects = response?.data?.subject_count || 1;
         setCorrectedFields([]);
       }
 
@@ -873,6 +1138,27 @@ export default function CABQPVerification({ user, onLogout }) {
           await new Promise((resolve) => setTimeout(resolve, 1500));
         }
         const resolvedState = resolvedStateFromDetail(caseDetail);
+
+        // More than one person in the submitted document: the server has already
+        // created one Case each. List them and let the operator pick, instead of
+        // presenting the first person's verdict as if it were the whole answer.
+        const splitCount = caseDetail?.result?.evidence?.split_source?.block_count || 1;
+        if (reportedSubjects > 1 || splitCount > 1) {
+          let group = null;
+          try {
+            group = await loadSubjectGroup(caseId, uploadedFile?.name || '');
+          } catch (groupErr) {
+            group = null;
+          }
+          if (group) {
+            setSubjectGroup(group);
+            setSelectedSubjectId(null);
+            setCurrentCaseData(null);
+            setAppState('subject-list');
+            syncHistoryFromBackend();
+            return;
+          }
+        }
 
         const extracted = caseDetail.extracted || {};
         setFormValues((prev) => ({
@@ -932,7 +1218,7 @@ export default function CABQPVerification({ user, onLogout }) {
         user={user}
         roleLabel={ROLE_LABELS[['ADMIN', 'REVIEWER', 'USER'].find((r) => roles.has(r))] || 'Cán bộ nghiệp vụ'}
         onHome={() => {
-          setAppState('initial');
+          startNewLookup();
           setCurrentNav('search');
         }}
         onLogout={onLogout}
@@ -969,7 +1255,7 @@ export default function CABQPVerification({ user, onLogout }) {
             onRefresh={syncHistoryFromBackend}
             onBackToSearch={() => {
               setCurrentNav('search');
-              setAppState('initial');
+              startNewLookup();
             }}
           />
         ) : appState === 'initial' ? (
@@ -1756,7 +2042,7 @@ export default function CABQPVerification({ user, onLogout }) {
                 <div className="flex items-center gap-2.5">
                   <button
                     type="button"
-                    onClick={() => setAppState('initial')}
+                    onClick={startNewLookup}
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 hover:bg-slate-50 text-[12.5px] font-semibold text-slate-700 transition-colors group cursor-pointer"
                     title="Quay lại biểu mẫu tra cứu"
                   >
@@ -1764,10 +2050,26 @@ export default function CABQPVerification({ user, onLogout }) {
                     <span>Tra cứu mới</span>
                   </button>
 
+                  {subjectGroup && appState !== 'subject-list' && (
+                    <button
+                      type="button"
+                      onClick={handleBackToSubjectList}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 hover:bg-slate-50 text-[12.5px] font-semibold text-slate-700 transition-colors group cursor-pointer"
+                      title="Quay lại danh sách đối tượng trong tài liệu"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Danh sách {subjectGroup.subjectCount} đối tượng</span>
+                    </button>
+                  )}
+
                   <div className="h-3.5 w-[1px] bg-slate-200" />
 
                   <span className="font-mono text-slate-900 font-bold text-[12.5px]">
-                    {currentCaseData?.case_code || 'Chưa có'}
+                    {appState === 'subject-list'
+                      ? `${subjectGroup?.subjectCount || 0} hồ sơ`
+                      : appState === 'bulk-processing'
+                      ? `${bulkJob?.job?.processed ?? 0}/${bulkJob?.job?.total_rows ?? 0} dòng`
+                      : currentCaseData?.case_code || 'Chưa có'}
                   </span>
                   <span className="hidden sm:inline h-3.5 w-[1px] bg-slate-200" />
                   <span className="hidden sm:inline text-[11.5px] text-slate-500">
@@ -1778,7 +2080,7 @@ export default function CABQPVerification({ user, onLogout }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[11.5px] border font-bold flex items-center gap-1.5 ${
-                      appState === 'loading'
+                      appState === 'loading' || appState === 'bulk-processing'
                         ? 'bg-red-50 text-red-600 border-red-200'
                         : appState === 'verified'
                         ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
@@ -1787,9 +2089,15 @@ export default function CABQPVerification({ user, onLogout }) {
                         : 'bg-slate-100 text-slate-600 border-slate-200'
                     }`}
                   >
-                    {appState === 'loading' && <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping"></span>}
+                    {(appState === 'loading' || appState === 'bulk-processing') && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping"></span>
+                    )}
                     {appState === 'loading'
                       ? 'Đang xử lý'
+                      : appState === 'bulk-processing'
+                      ? 'Đang xử lý danh sách'
+                      : appState === 'subject-list'
+                      ? 'Tài liệu nhiều đối tượng'
                       : appState === 'verified'
                       ? 'Đã xác định đơn vị'
                       : appState === 'needs-verification'
@@ -2192,6 +2500,27 @@ export default function CABQPVerification({ user, onLogout }) {
                   );
                 })()}
 
+                {/* STATE 3b: MULTI-SUBJECT LIST
+                    One uploaded document held several people. Each is already an
+                    independent Case on the server; this only lists them and loads
+                    the real detail for whichever one the operator opens. */}
+                {/* STATE 3b: SPREADSHEET IMPORT IN PROGRESS */}
+                {appState === 'bulk-processing' && (
+                  <BulkProgressView state={bulkJob} onNewLookup={startNewLookup} />
+                )}
+
+                {appState === 'subject-list' && (
+                  <div className="space-y-3">
+                    {bulkJob && <BulkImportSummary state={bulkJob} />}
+                    <MultiSubjectListView
+                      group={subjectGroup}
+                      selectedId={selectedSubjectId}
+                      onSelect={handleSelectSubject}
+                      onNewLookup={startNewLookup}
+                    />
+                  </div>
+                )}
+
                 {/* STATE 4: NEEDS VERIFICATION */}
                 {appState === 'needs-verification' && (
                   <NeedsVerificationView
@@ -2253,6 +2582,8 @@ export default function CABQPVerification({ user, onLogout }) {
         caseDetail={modalCaseDetail}
       />
 
+      <BulkRowLimitModal error={bulkLimitError} onClose={() => setBulkLimitError(null)} />
+
       {/* OCR Result & Entity Extraction Review Modal */}
       <OcrResultModal
         isOpen={isOcrModalOpen}
@@ -2263,7 +2594,16 @@ export default function CABQPVerification({ user, onLogout }) {
         onConfirmBulk={async (jobId, mapping) => {
           const response = await axios.post(`/api/v1/bulk/${jobId}/confirm`, { mapping }, { timeout: 10000 });
           setUploadMessage('Danh sách đã được tiếp nhận và đang chờ xử lý.');
+          // Confirming only queues the job. Watch it from here, or the modal
+          // closes onto the entry form and the import has no visible outcome.
+          watchBulkJob(jobId, uploadedFile?.name);
           return response.data;
+        }}
+        onViewBulk={(jobId) => {
+          // A job that was already confirmed (a re-uploaded duplicate file) has
+          // no button to press; this opens its progress/result view directly.
+          setIsOcrModalOpen(false);
+          watchBulkJob(jobId, uploadedFile?.name);
         }}
         onConfirmAndSearch={(updatedFields) => {
           // Pass the edited values straight into handleSearch rather than
@@ -2274,6 +2614,318 @@ export default function CABQPVerification({ user, onLogout }) {
           handleSearch(null, { values: updatedFields, correctedFrom: pendingCaseId });
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * The list is longer than one import may process.
+ *
+ * A blocking dialog rather than an inline message: the file was rejected
+ * outright, nothing was queued, and the operator has to go split it before
+ * anything else can happen. The wording comes from the server, which owns the
+ * cap — the client never states a limit of its own, so the two cannot disagree.
+ */
+function BulkRowLimitModal({ error, onClose }) {
+  if (!error) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+      <div
+        role="alertdialog"
+        aria-labelledby="bulk-limit-title"
+        className="w-full max-w-md bg-white rounded-md shadow-2xl border border-slate-200 overflow-hidden"
+      >
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-md bg-amber-50 border border-amber-200 flex items-center justify-center flex-shrink-0">
+            <AlertTriangle className="w-5 h-5 text-amber-600" />
+          </div>
+          <div className="min-w-0">
+            <h3 id="bulk-limit-title" className="text-[15px] font-bold text-slate-900">
+              Danh sách vượt quá giới hạn
+            </h3>
+            {error.fileName && <p className="text-xs text-slate-500 truncate">{error.fileName}</p>}
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-[13.5px] text-slate-700 leading-relaxed">{error.message}</p>
+          {Number.isFinite(error.rows) && Number.isFinite(error.limit) && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
+                <div className="text-[11.5px] text-slate-500">Số dòng trong tệp</div>
+                <div className="text-[19px] font-bold text-amber-700 mt-0.5">{error.rows}</div>
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
+                <div className="text-[11.5px] text-slate-500">Giới hạn mỗi lần</div>
+                <div className="text-[19px] font-bold text-slate-900 mt-0.5">{error.limit}</div>
+              </div>
+            </div>
+          )}
+          <p className="text-[12.5px] text-slate-500">
+            Không có hồ sơ nào được tạo. Hãy tách tệp rồi tải lên lại từng phần.
+          </p>
+        </div>
+
+        <div className="px-5 py-4 border-t border-slate-200 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white text-sm font-semibold"
+          >
+            Đã hiểu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const BULK_STATUS_LABELS = {
+  QUEUED: 'Đã tiếp nhận, đang chờ đến lượt',
+  PROCESSING: 'Đang đối chiếu từng dòng',
+  COMPLETED: 'Đã xử lý xong',
+  COMPLETED_WITH_ERRORS: 'Đã xử lý xong, có dòng lỗi',
+  FAILED: 'Xử lý thất bại',
+};
+
+/**
+ * Live progress of a spreadsheet import.
+ *
+ * Every number here comes from `GET /bulk/{id}` — the worker's own counters.
+ * The bar is `processed / total_rows`, not a timer: a list of 500 rows and a
+ * list of 3 must not animate at the same speed, and a stalled job has to look
+ * stalled rather than keep filling.
+ */
+function BulkProgressView({ state, onNewLookup }) {
+  const job = state?.job;
+  const total = job?.total_rows ?? 0;
+  const processed = job?.processed ?? 0;
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const status = state?.status || 'QUEUED';
+
+  return (
+    <div className="bg-white rounded-md border border-slate-200 shadow-sm p-6 sm:p-8">
+      <div className="text-center max-w-[620px] mx-auto">
+        <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-md bg-red-50/90 border border-red-200 text-red-800 shadow-xs mb-3">
+          <Loader2 className="w-4 h-4 text-red-600 animate-spin flex-shrink-0" />
+          <span className="text-[12px] font-bold uppercase tracking-wider text-red-600">Đang xử lý:</span>
+          <span className="text-[13px] font-semibold text-slate-900 text-left">
+            {BULK_STATUS_LABELS[status] || status}
+          </span>
+        </div>
+        <h2 className="text-[20px] font-bold text-slate-900">Đang xử lý danh sách nhiều dòng</h2>
+        <p className="text-[14.5px] text-slate-500 mt-1.5 leading-relaxed">
+          Mỗi dòng được tạo thành một hồ sơ độc lập và đối chiếu riêng. Kết quả sẽ hiện ngay khi xử lý xong.
+        </p>
+        {state?.fileName && (
+          <p className="text-[12.5px] text-slate-400 mt-1 truncate">Nguồn: {state.fileName}</p>
+        )}
+      </div>
+
+      <div className="max-w-[760px] mx-auto mt-7">
+        <div className="flex items-end justify-between mb-1.5">
+          <span className="text-[12.5px] font-semibold text-slate-600">
+            Đã xử lý {processed}/{total || '—'} dòng
+          </span>
+          <span className="text-[12.5px] font-bold text-slate-900">{total > 0 ? `${percent}%` : ''}</span>
+        </div>
+        <div className="h-[10px] bg-slate-200 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-red-600 rounded-full transition-[width] duration-300 ease-linear"
+            style={{ width: total > 0 ? `${percent}%` : '8%' }}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+          {[
+            ['Tổng số dòng', total],
+            ['Đã tạo hồ sơ', job?.succeeded ?? 0],
+            ['Dòng lỗi', job?.failed ?? 0],
+            ['Trùng, bỏ qua', job?.skipped ?? 0],
+          ].map(([label, value]) => (
+            <div key={label} className="bg-slate-50 border border-slate-200 rounded-md p-3">
+              <div className="text-[11.5px] text-slate-500">{label}</div>
+              <div className="text-[19px] font-bold text-slate-900 mt-0.5">{value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={onNewLookup}
+            className="px-3 py-1.5 rounded-md border border-slate-200 text-[12.5px] font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Tra cứu mới
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What a finished import produced, shown above the list of people.
+ *
+ * Rows that never became a Case (validation errors, skipped duplicates) have no
+ * entry in the list below, so they are reported here instead of disappearing.
+ */
+function BulkImportSummary({ state }) {
+  const job = state?.job;
+  if (!job) return null;
+  const errors = state?.errors || [];
+  const failed = job.failed ?? 0;
+  const skipped = job.skipped ?? 0;
+  const tone =
+    job.status === 'FAILED'
+      ? 'border-red-200 bg-red-50'
+      : failed > 0 || job.status === 'COMPLETED_WITH_ERRORS'
+      ? 'border-amber-200 bg-[#FDF0BE]'
+      : 'border-emerald-200 bg-emerald-50';
+
+  return (
+    <div className={`rounded-md border ${tone} px-4 py-3`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Layers className="w-4 h-4 text-slate-600 flex-shrink-0" />
+          <span className="text-[13.5px] font-bold text-slate-900">
+            {BULK_STATUS_LABELS[job.status] || job.status}
+          </span>
+          {state?.fileName && (
+            <span className="text-[12px] text-slate-500 truncate">· {state.fileName}</span>
+          )}
+        </div>
+        <span className="text-[12.5px] text-slate-700 font-semibold">
+          {job.succeeded ?? 0}/{job.total_rows ?? 0} dòng đã tạo hồ sơ
+          {failed > 0 ? ` · ${failed} lỗi` : ''}
+          {skipped > 0 ? ` · ${skipped} trùng` : ''}
+        </span>
+      </div>
+
+      {errors.length > 0 && (
+        <ul className="mt-2 space-y-1 text-[12.5px] text-slate-700 max-h-32 overflow-y-auto">
+          {errors.map((error, index) => (
+            <li key={`${error.row_index}-${error.code}-${index}`}>
+              <strong>Dòng {error.row_index}:</strong> {error.message_vi || error.code}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Row status for the multi-subject list. It mirrors resolvedStateFromDetail so a
+// name in the list and the detail screen it opens never disagree.
+function subjectRowStatus(item) {
+  const org = item?.organization_type || 'UNKNOWN';
+  if (item?.resolution_status === 'MATCHED' && (org === 'BCA' || org === 'BQP')) {
+    return { label: 'Đã xác định đơn vị', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
+  }
+  if (item?.resolution_status === 'AMBIGUOUS' || item?.resolution_status === 'CONFLICT' || item?.workflow_status === 'NEED_REVIEW') {
+    return { label: 'Cần xác minh', className: 'bg-[#FDF0BE] text-amber-800 border-amber-200' };
+  }
+  return { label: 'Chưa có kết luận', className: 'bg-slate-100 text-slate-600 border-slate-200' };
+}
+
+const SUBJECT_ORG_LABELS = {
+  BCA: 'Bộ Công an',
+  BQP: 'Bộ Quốc phòng',
+  OTHER: 'Ngoài phạm vi',
+  UNKNOWN: 'Chưa xác định',
+};
+
+/**
+ * The roster of people found in one uploaded document.
+ *
+ * Each row is a separate Case the server already decided on its own; this view
+ * shows only what the list endpoint returned and never merges rows into a single
+ * verdict. Opening a name loads that Case's full result.
+ */
+function MultiSubjectListView({ group, selectedId, onSelect, onNewLookup }) {
+  const items = group?.items || [];
+  if (items.length === 0) {
+    return (
+      <div className="bg-white rounded-md border border-slate-200 shadow-sm p-6 text-center">
+        <p className="text-[13.5px] text-slate-600">Chưa có dữ liệu đối tượng cho tài liệu này.</p>
+        <button
+          type="button"
+          onClick={onNewLookup}
+          className="mt-3 px-3 py-1.5 rounded-md border border-slate-200 text-[12.5px] font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          Tra cứu mới
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-md border border-slate-200 shadow-sm">
+      <div className="px-4 py-3 border-b border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 bg-red-700 rounded-[1px]" />
+            <h2 className="text-[15px] font-bold text-slate-900">
+              Tài liệu có {group?.subjectCount || items.length} đối tượng
+            </h2>
+          </div>
+          <span className="text-[11.5px] text-slate-500 font-semibold">
+            {group?.sourceLabel ? `Nguồn: ${group.sourceLabel}` : 'Nguồn: tài liệu đã tải lên'}
+          </span>
+        </div>
+        <p className="text-[12.5px] text-slate-500 mt-1.5">
+          Hệ thống đã tách thành {items.length} hồ sơ độc lập. Chọn một tên để xem kết quả đối chiếu chi tiết.
+        </p>
+      </div>
+
+      <ul className="divide-y divide-slate-200">
+        {items.map((item, index) => {
+          const status = subjectRowStatus(item);
+          const isSelected = selectedId === item.case_id;
+          return (
+            <li key={item.case_id}>
+              <button
+                type="button"
+                onClick={() => onSelect(item.case_id)}
+                className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors hover:bg-slate-50 cursor-pointer ${
+                  isSelected ? 'bg-slate-50' : ''
+                }`}
+              >
+                <span className="mt-0.5 w-6 h-6 rounded-[2px] bg-slate-100 border border-slate-200 text-[11.5px] font-bold text-slate-600 flex items-center justify-center flex-shrink-0">
+                  {(item.block_index ?? index) + 1}
+                </span>
+
+                <span className="flex-1 min-w-0">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="text-[14px] font-bold text-slate-900 truncate">
+                      {item.subject_name || 'Chưa nhận dạng được họ tên'}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold ${status.className}`}>
+                      {status.label}
+                    </span>
+                  </span>
+                  <span className="mt-1 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-0.5 text-[12.5px] text-slate-600">
+                    <span className="truncate">
+                      <span className="text-slate-400">Đơn vị: </span>
+                      {item.current_unit || item.current_unit_raw || 'Chưa có'}
+                    </span>
+                    <span className="truncate">
+                      <span className="text-slate-400">Chức vụ: </span>
+                      {item.position || 'Chưa có'}
+                    </span>
+                    <span className="truncate">
+                      <span className="text-slate-400">Phạm vi: </span>
+                      {SUBJECT_ORG_LABELS[item.organization_type] || SUBJECT_ORG_LABELS.UNKNOWN}
+                    </span>
+                  </span>
+                </span>
+
+                <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0 mt-1" />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

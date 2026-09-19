@@ -10,9 +10,10 @@ from pathlib import Path
 _TMP = Path(tempfile.mkdtemp(prefix="cabqp-tests-"))
 os.environ.setdefault("DATABASE_URL", f"sqlite+pysqlite:///{_TMP / 'app.db'}")
 os.environ.setdefault("STORAGE_ROOT", str(_TMP / "documents"))
-# No SMTP host, so the mailer uses its file transport and the tests can read
-# back what was actually sent.
-os.environ.setdefault("MAIL_OUTBOX_DIR", str(_TMP / "mail"))
+# Gmail SMTP is the only mail transport; `mail_stub` replaces the socket below,
+# so these only have to satisfy Settings.mail_configured.
+os.environ.setdefault("GMAIL_USER", "cabqp-test@gmail.com")
+os.environ.setdefault("GMAIL_APP_PASSWORD", "test-app-password")
 os.environ.setdefault("RUNTIME_PROFILE", "local")
 os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("EMBEDDING_ENABLED", "false")
@@ -30,3 +31,11 @@ def app_database():
 
     Base.metadata.create_all(engine)
     yield engine
+
+
+@pytest.fixture(autouse=True)
+def stub_gmail_smtp(monkeypatch):
+    """Never open a socket to Gmail; record what would have been sent."""
+    import mail_stub
+
+    return mail_stub.install(monkeypatch)

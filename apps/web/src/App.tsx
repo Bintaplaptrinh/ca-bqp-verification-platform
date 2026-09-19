@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { changePassword, fetchCurrentUser, login, logout } from "./auth";
+import {
+  changePassword,
+  fetchCurrentUser,
+  fetchSignInMethods,
+  login,
+  logout,
+  requestLoginOtp,
+  verifyLoginOtp,
+} from "./auth";
+import type { SignInMethods } from "./auth";
 import type { CurrentUser } from "./types";
 import VerificationModule from "./components/VerificationModule.jsx";
 import { BrandTitle } from "./components/layout/AppHeader.jsx";
@@ -29,7 +38,57 @@ function AuthShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function LoginPage({ onSignedIn }: { onSignedIn: (user: CurrentUser) => void }) {
+const buttonClass =
+  "w-full h-10 rounded-md bg-[#b91c1c] hover:bg-[#8a1010] disabled:bg-slate-400 text-white text-sm font-semibold transition-colors";
+
+function AuthCard({ title, subtitle, error, children }: {
+  title: string;
+  subtitle: string;
+  error: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="bg-white rounded-md shadow-2xl border-t-4 border-[#b91c1c] px-6 py-7 sm:px-8">
+      <h1 className="text-center text-xl font-bold uppercase tracking-wide text-[#b91c1c]">{title}</h1>
+      <p className="mt-1 text-center text-xs text-slate-500">{subtitle}</p>
+      {error && (
+        <div className="mt-5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700" role="alert">
+          <strong className="block font-semibold">Đăng nhập không thành công</strong>
+          <span className="block mt-0.5">{error}</span>
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+function UsernameField({ id, value, onChange, disabled }: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="block mb-1 text-[13px] font-semibold text-slate-700">
+        Tên đăng nhập
+      </label>
+      <input
+        id={id}
+        className={inputClass}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Nhập tên đăng nhập"
+        autoComplete="username"
+        disabled={disabled}
+        autoFocus
+        required
+      />
+    </div>
+  );
+}
+
+function PasswordForm({ onSignedIn }: { onSignedIn: (user: CurrentUser) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -52,69 +111,221 @@ function LoginPage({ onSignedIn }: { onSignedIn: (user: CurrentUser) => void }) 
   }
 
   return (
-    <AuthShell>
-      <section className="bg-white rounded-md shadow-2xl border-t-4 border-[#b91c1c] px-6 py-7 sm:px-8">
-        <h1 className="text-center text-xl font-bold uppercase tracking-wide text-[#b91c1c]">Đăng nhập</h1>
-        <p className="mt-1 text-center text-xs text-slate-500">Tài khoản do quản trị viên hệ thống cấp</p>
+    <AuthCard title="Đăng nhập" subtitle="Tài khoản do quản trị viên hệ thống cấp" error={error}>
+      <form className="mt-5 space-y-4" onSubmit={submit}>
+        <UsernameField id="login-username" value={username} onChange={setUsername} />
 
-        {error && (
-          <div className="mt-5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700" role="alert">
-            <strong className="block font-semibold">Đăng nhập không thành công</strong>
-            <span className="block mt-0.5">{error}</span>
-          </div>
-        )}
-
-        <form className="mt-5 space-y-4" onSubmit={submit}>
-          <div>
-            <label htmlFor="login-username" className="block mb-1 text-[13px] font-semibold text-slate-700">
-              Tên đăng nhập
-            </label>
+        <div>
+          <label htmlFor="login-password" className="block mb-1 text-[13px] font-semibold text-slate-700">
+            Mật khẩu
+          </label>
+          <div className="relative">
             <input
-              id="login-username"
-              className={inputClass}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Nhập tên đăng nhập"
-              autoComplete="username"
-              autoFocus
+              id="login-password"
+              className={`${inputClass} pr-14`}
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Nhập mật khẩu"
+              autoComplete="current-password"
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword((value) => !value)}
+              className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-slate-500 hover:text-slate-800"
+            >
+              {showPassword ? "Ẩn" : "Hiện"}
+            </button>
           </div>
+        </div>
 
-          <div>
-            <label htmlFor="login-password" className="block mb-1 text-[13px] font-semibold text-slate-700">
-              Mật khẩu
-            </label>
-            <div className="relative">
-              <input
-                id="login-password"
-                className={`${inputClass} pr-14`}
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Nhập mật khẩu"
-                autoComplete="current-password"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((value) => !value)}
-                className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-slate-500 hover:text-slate-800"
-              >
-                {showPassword ? "Ẩn" : "Hiện"}
-              </button>
-            </div>
-          </div>
+        <button type="submit" disabled={busy} className={buttonClass}>
+          {busy ? "Đang kiểm tra" : "Đăng nhập"}
+        </button>
+      </form>
+    </AuthCard>
+  );
+}
 
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full h-10 rounded-md bg-[#b91c1c] hover:bg-[#8a1010] disabled:bg-slate-400 text-white text-sm font-semibold transition-colors"
-          >
-            {busy ? "Đang kiểm tra" : "Đăng nhập"}
+/**
+ * Sign in with a code mailed to the account's own address.
+ *
+ * Two deliberate properties, both of which mirror what the server does:
+ *
+ * - Requesting a code never reports whether the account exists. The server
+ *   answers identically either way, so this screen says "if the account exists,
+ *   a code has been sent" and moves on regardless. Do not add a branch that
+ *   presents success as confirmation of an account.
+ * - The countdown and the resend cooldown are display only. The server holds
+ *   the authoritative expiry and issuance budget and refuses on its own; a
+ *   re-enabled button here buys nothing.
+ */
+function OtpForm({ methods, onSignedIn }: { methods: SignInMethods; onSignedIn: (user: CurrentUser) => void }) {
+  const [username, setUsername] = useState("");
+  const [code, setCode] = useState("");
+  const [stage, setStage] = useState<"request" | "verify">("request");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [resendIn, setResendIn] = useState(0);
+
+  useEffect(() => {
+    if (stage !== "verify") return;
+    const timer = window.setInterval(() => {
+      setSecondsLeft((value) => (value > 0 ? value - 1 : 0));
+      setResendIn((value) => (value > 0 ? value - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [stage]);
+
+  async function sendCode(event?: React.FormEvent) {
+    event?.preventDefault();
+    if (busy || !username.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { expiresIn, resendAfter } = await requestLoginOtp(username.trim());
+      setSecondsLeft(expiresIn);
+      setResendIn(resendAfter);
+      setStage("verify");
+      setCode("");
+      setNotice(
+        `Nếu tài khoản tồn tại, mã gồm ${methods.otpCodeLength} chữ số đã được gửi tới hộp thư của tài khoản. Mã có hiệu lực ${expiresIn} giây.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitCode(event: React.FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onSignedIn(await verifyLoginOtp(username.trim(), code.trim()));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setCode("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (stage === "request") {
+    return (
+      <AuthCard title="Đăng nhập bằng mã" subtitle="Mã một lần sẽ được gửi tới hộp thư của tài khoản" error={error}>
+        <form className="mt-5 space-y-4" onSubmit={sendCode}>
+          <UsernameField id="otp-username" value={username} onChange={setUsername} />
+          <button type="submit" disabled={busy} className={buttonClass}>
+            {busy ? "Đang gửi mã" : "Gửi mã đăng nhập"}
           </button>
         </form>
-      </section>
+      </AuthCard>
+    );
+  }
+
+  return (
+    <AuthCard title="Nhập mã đăng nhập" subtitle={`Tài khoản ${username.trim()}`} error={error}>
+      {notice && (
+        <p className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-600">
+          {notice}
+        </p>
+      )}
+
+      <form className="mt-4 space-y-4" onSubmit={submitCode}>
+        <div>
+          <label htmlFor="otp-code" className="block mb-1 text-[13px] font-semibold text-slate-700">
+            Mã đăng nhập
+          </label>
+          <input
+            id="otp-code"
+            className={`${inputClass} text-center text-lg tracking-[0.5em] font-mono`}
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, methods.otpCodeLength))}
+            placeholder={"0".repeat(methods.otpCodeLength)}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={methods.otpCodeLength}
+            autoFocus
+            required
+          />
+          <p className="mt-1.5 text-xs text-slate-500">
+            {secondsLeft > 0 ? `Mã còn hiệu lực ${secondsLeft} giây.` : "Mã đã hết hiệu lực, vui lòng gửi lại."}
+          </p>
+        </div>
+
+        <button type="submit" disabled={busy || code.length < methods.otpCodeLength} className={buttonClass}>
+          {busy ? "Đang kiểm tra" : "Xác nhận mã"}
+        </button>
+      </form>
+
+      <div className="mt-3 flex items-center justify-between text-xs">
+        <button
+          type="button"
+          className="text-slate-500 hover:text-slate-800"
+          onClick={() => {
+            setStage("request");
+            setError(null);
+            setNotice(null);
+          }}
+        >
+          Đổi tài khoản
+        </button>
+        <button
+          type="button"
+          disabled={busy || resendIn > 0}
+          className="font-semibold text-[#b91c1c] hover:text-[#8a1010] disabled:text-slate-400"
+          onClick={() => sendCode()}
+        >
+          {resendIn > 0 ? `Gửi lại sau ${resendIn}s` : "Gửi lại mã"}
+        </button>
+      </div>
+    </AuthCard>
+  );
+}
+
+function LoginPage({ onSignedIn }: { onSignedIn: (user: CurrentUser) => void }) {
+  const [methods, setMethods] = useState<SignInMethods | null>(null);
+  const [mode, setMode] = useState<"password" | "otp">("password");
+
+  useEffect(() => {
+    (async () => setMethods(await fetchSignInMethods()))();
+  }, []);
+
+  const otpOffered = Boolean(methods?.otp);
+
+  return (
+    <AuthShell>
+      {otpOffered && (
+        <div className="mb-3 grid grid-cols-2 gap-1 rounded-md bg-black/25 p-1">
+          {([
+            ["password", "Mật khẩu"],
+            ["otp", "Mã một lần"],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setMode(key)}
+              className={`h-9 rounded text-sm font-semibold transition-colors ${
+                mode === key ? "bg-white text-[#b91c1c]" : "text-white/85 hover:text-white"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {otpOffered && mode === "otp" && methods ? (
+        <OtpForm methods={methods} onSignedIn={onSignedIn} />
+      ) : (
+        <PasswordForm onSignedIn={onSignedIn} />
+      )}
     </AuthShell>
   );
 }

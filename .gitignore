@@ -23,6 +23,8 @@ artifacts/synthetic/
 .venv/
 venv/
 node_modules/
+# Vite's pre-bundled development dependency cache.
+apps/web/.vite/
 .pytest_cache/
 .coverage
 htmlcov/

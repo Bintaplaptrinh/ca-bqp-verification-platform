@@ -34,6 +34,10 @@ from cabqp.shared.schemas import (
     UnitUpdate,
 )
 
+#: Serializes unit-registry publishes. The Person Registry holds its own,
+#: separate key (PERSON_REGISTRY_PUBLISH_LOCK) so the two never block each other.
+REGISTRY_PUBLISH_LOCK = 2288062026
+
 
 def _snapshot_unit(version_id: str, unit: Unit) -> RegistrySnapshotUnit:
     return RegistrySnapshotUnit(
@@ -400,7 +404,10 @@ class RegistryService:
         if rv.status != "APPROVED":
             raise HTTPException(409, "Only APPROVED registry versions can be published")
         if self.db.bind is not None and self.db.bind.dialect.name == "postgresql":
-            self.db.execute(text("SELECT pg_advisory_xact_lock(2288062026)"))
+            self.db.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": REGISTRY_PUBLISH_LOCK},
+            )
         for old in self.db.scalars(select(RegistryVersion).where(RegistryVersion.status == "PUBLISHED").with_for_update()):
             old.status = "DEPRECATED"
         rv = self.db.scalar(select(RegistryVersion).where(RegistryVersion.id == rv.id).with_for_update())

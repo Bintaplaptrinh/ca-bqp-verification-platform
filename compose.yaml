@@ -67,6 +67,16 @@ services:
       ANTIMALWARE_REQUIRED: ${ANTIMALWARE_REQUIRED:-true}
       RATE_LIMIT_ENABLED: "true"
       RATE_LIMIT_FAIL_OPEN: ${RATE_LIMIT_FAIL_OPEN:-true}
+      RATE_LIMIT_IP_PER_MINUTE: ${RATE_LIMIT_IP_PER_MINUTE:-600}
+      RATE_LIMIT_AUTH_PER_MINUTE: ${RATE_LIMIT_AUTH_PER_MINUTE:-10}
+      # The web container proxies /api, so its address has to be trusted here or
+      # every user shares one rate-limit bucket (the proxy's). Compose assigns
+      # that address dynamically, so the default is the private ranges Docker
+      # allocates from. Narrow it to the proxy's real address, or to the WAF's,
+      # in any deployment where something untrusted can reach this port directly.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-172.16.0.0/12,192.168.0.0/16}
+      SECURITY_HEADERS_ENABLED: "true"
+      SINGLE_ACTIVE_SESSION: ${SINGLE_ACTIVE_SESSION:-true}
       CORS_ORIGINS: http://localhost:3000
       HF_HOME: /models
       RESOLVER_CALIBRATION_PATH: /app/artifacts/resolver_calibration.json

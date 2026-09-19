@@ -25,11 +25,22 @@ test('an administrator issues an account and is shown its password once', async 
 
   await page.getByRole('button', { name: 'Cấp tài khoản', exact: true }).click();
 
-  // Delivery succeeded, so the screen confirms where it went and shows no password.
-  await expect(page.getByText(/Đã gửi mật khẩu tới/)).toBeVisible({ timeout: 20_000 });
-  // The login id is shown in the one-time notice, and the account now appears
-  // in the list below it.
-  await expect(page.getByRole('code').filter({ hasText: code.toLowerCase() })).toBeVisible();
+  // Delivery result and the one-time credential notice now appear in a modal,
+  // rather than as a persistent message at the top of the administration page.
+  const deliveryDialog = page.getByRole('dialog');
+  await expect(deliveryDialog).toBeVisible({ timeout: 20_000 });
+  await expect(deliveryDialog.getByText(code.toLowerCase(), { exact: true })).toBeVisible();
+  await expect(deliveryDialog.locator('.modal-box')).toHaveCSS('user-select', 'text');
+  await expect(deliveryDialog.getByRole('button', { name: 'Đóng', exact: true })).toHaveCSS('user-select', 'text');
+
+  // Local environments may use a real SMTP server or intentionally exercise
+  // the failed-delivery path. In the latter, the one-time password must be
+  // available in this modal for direct handoff.
+  if (await deliveryDialog.getByText('Không gửi được thư', { exact: true }).count()) {
+    await expect(deliveryDialog.getByText('Mật khẩu:', { exact: true })).toBeVisible();
+  }
+  await deliveryDialog.getByRole('button', { name: 'Đóng', exact: true }).click();
+  await expect(deliveryDialog).toBeHidden();
   await expect(page.getByRole('table').getByText(code.toLowerCase(), { exact: true })).toBeVisible();
   // The display name is not unique across runs; the derived login id is.
 });

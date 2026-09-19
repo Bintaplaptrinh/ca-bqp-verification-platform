@@ -20,7 +20,11 @@ from cabqp.api import (
     reviews,
 )
 from cabqp.shared.logging import configure_logging
-from cabqp.shared.middleware import RateLimitMiddleware, RequestContextMiddleware
+from cabqp.shared.middleware import (
+    RateLimitMiddleware,
+    RequestContextMiddleware,
+    SecurityHeadersMiddleware,
+)
 from cabqp.shared.settings import get_settings
 
 configure_logging()
@@ -64,8 +68,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
 )
+# Starlette runs middleware in reverse registration order, so the last one added
+# is the outermost. Security headers go outermost on purpose: a 429 from the rate
+# limiter and a 500 from the exception handler carry them too.
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(health.router)
 for router in [

@@ -62,6 +62,17 @@ function toCurrentUser(payload: any): CurrentUser {
 
 export class AuthError extends Error {}
 
+/** The server's own message when it sent one, otherwise the given fallback. */
+async function errorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    if (typeof body?.detail === "string") return body.detail;
+  } catch {
+    /* keep the fallback */
+  }
+  return fallback;
+}
+
 export async function login(username: string, password: string): Promise<CurrentUser> {
   const response = await fetch(apiUrl("/auth/login"), {
     method: "POST",
@@ -70,17 +81,87 @@ export async function login(username: string, password: string): Promise<Current
     body: JSON.stringify({ username, password }),
   });
 
-  if (!response.ok) {
-    let message = "Không thể đăng nhập. Vui lòng thử lại.";
-    try {
-      const body = await response.json();
-      if (typeof body?.detail === "string") message = body.detail;
-    } catch {
-      /* keep the generic message */
-    }
-    throw new AuthError(message);
-  }
+  if (!response.ok) throw new AuthError(await errorMessage(response, "Không thể đăng nhập. Vui lòng thử lại."));
 
+  const body = await response.json();
+  writeSession({ access_token: body.access_token, expires_at: body.expires_at });
+  return toCurrentUser(body.user);
+}
+
+export type SignInMethods = {
+  password: boolean;
+  otp: boolean;
+  otpTtlSeconds: number;
+  otpCodeLength: number;
+  otpResendAfterSeconds: number;
+};
+
+const DEFAULT_METHODS: SignInMethods = {
+  password: true,
+  otp: false,
+  otpTtlSeconds: 60,
+  otpCodeLength: 6,
+  otpResendAfterSeconds: 60,
+};
+
+/**
+ * Which sign-in methods this deployment offers.
+ *
+ * Used only to decide whether to render the OTP tab. Like `can()`, it describes
+ * what the server will accept and never decides anything: both OTP endpoints
+ * re-check the same setting and answer 503 on their own. A failed probe falls
+ * back to password-only, which is the method that always exists.
+ */
+export async function fetchSignInMethods(): Promise<SignInMethods> {
+  try {
+    const response = await fetch(apiUrl("/auth/methods"), { credentials: "same-origin" });
+    if (!response.ok) return DEFAULT_METHODS;
+    const body = await response.json();
+    return {
+      password: body.password !== false,
+      otp: Boolean(body.otp),
+      otpTtlSeconds: Number(body.otp_ttl_seconds) || DEFAULT_METHODS.otpTtlSeconds,
+      otpCodeLength: Number(body.otp_code_length) || DEFAULT_METHODS.otpCodeLength,
+      otpResendAfterSeconds:
+        Number(body.otp_resend_after_seconds) || DEFAULT_METHODS.otpResendAfterSeconds,
+    };
+  } catch {
+    return DEFAULT_METHODS;
+  }
+}
+
+/**
+ * Ask for a one-time code.
+ *
+ * The server answers the same way whether or not the account exists, so there
+ * is deliberately nothing here to branch on: a success is not evidence that an
+ * account was found, and the UI must not present it as such.
+ */
+export async function requestLoginOtp(username: string): Promise<{ expiresIn: number; resendAfter: number }> {
+  const response = await fetch(apiUrl("/auth/otp/request"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ username }),
+  });
+  if (!response.ok) throw new AuthError(await errorMessage(response, "Không thể gửi mã đăng nhập."));
+  const body = await response.json();
+  return {
+    expiresIn: Number(body.expires_in) || DEFAULT_METHODS.otpTtlSeconds,
+    resendAfter: Number(body.resend_after) || DEFAULT_METHODS.otpResendAfterSeconds,
+  };
+}
+
+export async function verifyLoginOtp(username: string, code: string): Promise<CurrentUser> {
+  const response = await fetch(apiUrl("/auth/otp/verify"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ username, code }),
+  });
+  if (!response.ok) {
+    throw new AuthError(await errorMessage(response, "Mã đăng nhập không đúng hoặc đã hết hiệu lực."));
+  }
   const body = await response.json();
   writeSession({ access_token: body.access_token, expires_at: body.expires_at });
   return toCurrentUser(body.user);
@@ -122,16 +203,7 @@ export async function changePassword(currentPassword: string, newPassword: strin
     credentials: "same-origin",
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   });
-  if (!response.ok) {
-    let message = "Không thể đổi mật khẩu.";
-    try {
-      const body = await response.json();
-      if (typeof body?.detail === "string") message = body.detail;
-    } catch {
-      /* keep the generic message */
-    }
-    throw new AuthError(message);
-  }
+  if (!response.ok) throw new AuthError(await errorMessage(response, "Không thể đổi mật khẩu."));
 }
 
 export async function logout(): Promise<void> {

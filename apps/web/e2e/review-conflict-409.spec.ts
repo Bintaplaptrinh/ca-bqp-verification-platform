@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { openReviewQueueAtNewest, signInAs, submitTextQuery, waitForResultState } from './helpers';
+import {
+  openReviewQueueAtNewest,
+  openTabOnSameSession,
+  signInAs,
+  submitTextQuery,
+  waitForResultState,
+} from './helpers';
 
 // This spec triggers a real HTTP 409 (stale expected_version), not an
 // identity/RBAC conflict: both tabs sign in as the same reviewer account, so
@@ -30,11 +36,12 @@ test('deciding a review with a stale version shows the conflict banner instead o
   const card1 = cardSelector(page);
   await expect(card1).toBeVisible({ timeout: 15_000 });
 
-  // sessionStorage (where the dev-login token lives) is per-tab, not shared
-  // across a browsing context — page2 needs its own dev-login, not just a
-  // new tab navigated to the same app.
-  const page2 = await context.newPage();
-  await signInAs(page2, 'REVIEWER');
+  // sessionStorage is per-tab, so a new tab starts signed out — but signing in
+  // again as the same reviewer would revoke this tab's session (the server
+  // keeps one live session per account). The second tab therefore shares this
+  // one, which is both what a person does and what this spec needs: the same
+  // identity holding two independently stale views of one review.
+  const page2 = await openTabOnSameSession(context, page);
   await openReviewQueueAtNewest(page2);
   const card2 = cardSelector(page2);
   await expect(card2).toBeVisible({ timeout: 15_000 });

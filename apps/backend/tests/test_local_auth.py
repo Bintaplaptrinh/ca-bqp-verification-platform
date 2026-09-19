@@ -290,22 +290,22 @@ def _auth(token):
 def _issued_password(recipient: str) -> str:
     """Read the password out of the message the server actually sent.
 
-    The tests run with no SMTP host, so the mailer writes `.eml` files to
-    MAIL_OUTBOX_DIR. Pulling the credential back out of that file — rather than
-    out of the API response — is what proves delivery really happened: the
-    response deliberately withholds the password once the mail goes out.
+    `mail_stub` stands in for the Gmail socket and records every EmailMessage
+    the mailer handed to SMTP. Pulling the credential back out of that message —
+    rather than out of the API response — is what proves delivery really
+    happened: the response deliberately withholds the password once the mail
+    goes out.
     """
-    from email import message_from_string
-    from email.policy import default as default_policy
-    from pathlib import Path
+    import mail_stub
 
-    outbox = Path(get_settings().mail_outbox_path)
-    messages = sorted(outbox.glob("*.eml"), key=lambda x: x.stat().st_mtime)
-    assert messages, f"no message was written to {outbox}"
-    # The default policy is what gives back an EmailMessage with get_content().
-    parsed = message_from_string(messages[-1].read_text(encoding="utf-8"), policy=default_policy)
+    assert mail_stub.SENT, "no message was handed to SMTP"
+    parsed = mail_stub.SENT[-1]
     assert parsed["To"] == recipient, f"last message went to {parsed['To']}, not {recipient}"
-    body = parsed.get_content()
+    # The message is multipart now (text + HTML + inline logo). Reading the
+    # plain-text alternative rather than the HTML is deliberate: it keeps this
+    # helper from depending on the markup, and it fails loudly if the text
+    # alternative is ever dropped, which some clients would then render empty.
+    body = parsed.get_body(preferencelist=("plain",)).get_content()
     for line in body.splitlines():
         if line.strip().startswith("Mật khẩu"):
             return line.split(":", 1)[1].strip()
@@ -565,7 +565,7 @@ def test_password_is_returned_only_when_delivery_fails(client, accounts, monkeyp
     from cabqp.modules.notifications import email as mailer
 
     def refuse(*_args, **_kwargs):
-        return mailer.DeliveryResult(ok=False, transport="smtp", detail="SMTPConnectError")
+        return mailer.DeliveryResult(ok=False, detail="SMTPAuthenticationError")
 
     monkeypatch.setattr("cabqp.api.admin_users.mailer.send_new_account_email", refuse)
 
@@ -631,3 +631,34 @@ def test_a_non_administrator_cannot_delete_accounts(client, accounts):
     _create_account(client, token, display_name="Bình Thường", username="binhthuong", email="bt@cabqp.local")
     user_token = _login(client, "user", "user")
     assert client.delete("/api/v1/admin/users/binhthuong", headers=_auth(user_token)).status_code == 403
+
+
+# --- Response projection -----------------------------------------------------
+
+
+def test_account_responses_are_a_projection_not_the_row(client, accounts):
+    """Routes answer with an explicit field list, never a serialized ORM object.
+
+    `admin_users._serialize` decides what leaves the server. The property under
+    test is that the credential columns are not in it: returning the row itself,
+    or adding a field by looping over the model's columns, would publish the
+    password hash to every administrator screen and to anyone who later reads
+    the browser's network log.
+    """
+    token = _login(client, "admin", "admin")
+
+    listed = client.get("/api/v1/admin/users", headers=_auth(token))
+    assert listed.status_code == 200, listed.text
+    me = client.get("/api/v1/auth/me", headers=_auth(token))
+    assert me.status_code == 200, me.text
+
+    for response in (listed, me):
+        body = response.text
+        for secret in ("password_hash", "pbkdf2_sha256$", "token_hash"):
+            assert secret not in body, f"{secret} must never appear in an API response"
+
+    rows = listed.json()["items"] if isinstance(listed.json(), dict) else listed.json()
+    assert rows, "the seeded accounts should be listed"
+    exposed = set(rows[0])
+    assert "password_hash" not in exposed
+    assert "permissions" in exposed and "is_active" in exposed

@@ -73,6 +73,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The account/OTP emails embed the app's own logo as an inline MIME part, so the
+# image has to travel with the package rather than being read out of apps/web.
+[tool.setuptools.package-data]
+"cabqp.modules.notifications" = ["assets/*.png"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
