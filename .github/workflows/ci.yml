@@ -21,7 +21,6 @@ jobs:
         run: pip install -e 'apps/backend[dev]'
       - name: Unit + golden regression suites
         env:
-          DATABASE_URL: 'sqlite+pysqlite:///:memory:'
           AUTH_DISABLED: 'true'
           EMBEDDING_ENABLED: 'false'
           ANTIMALWARE_ENABLED: 'false'

@@ -23,7 +23,7 @@ os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 import pytest  # noqa: E402
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def app_database():
     """Create the application schema in the shared test database."""
     from cabqp.shared import models  # noqa: F401 - registers every table on Base
