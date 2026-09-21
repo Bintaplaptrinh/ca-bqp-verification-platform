@@ -30,7 +30,7 @@ jobs:
       - name: Unit test
         run: pytest
 
-  docker:
+  docker-build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -40,4 +40,15 @@ jobs:
         run: docker compose config -q
 
       - name: Docker build
-        run: docker compose build
+        run: |
+          docker compose build
+          docker build -t cabqp-backend:ci ./apps/backend
+
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cabqp-backend:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
