@@ -104,7 +104,7 @@ jobs:
           docker build -t cabqp-backend:ci apps/backend
           docker build -t cabqp-web:ci apps/web
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: cabqp-backend:ci
           format: table
