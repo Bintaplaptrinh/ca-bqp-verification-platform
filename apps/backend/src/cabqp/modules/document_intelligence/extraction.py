@@ -53,9 +53,28 @@ FORMER_MARKERS = ["trước đây công tác tại", "từng công tác tại", 
 UNIT_PREFIXES = r"(?:Công an|Cục|Bộ Tư lệnh|Bộ Chỉ huy|Ban Chỉ huy|Học viện|Trường|Bệnh viện|Viện|Trung tâm|Quân khu|Quân đoàn|Sư đoàn|Lữ đoàn|Trung đoàn|Tiểu đoàn|Tổng cục|Binh chủng|Quân chủng)"
 UNIT_NAME_BODY = r"[^.;\n,]{2,120}?(?=\s+(?:và|,)\s|[.;\n,]|$)"
 
+# Lowercase is valid for a name-only query, but short lowercase role/unit phrases
+# are equally word-shaped. These domain markers prove the input is not a bare name;
+# longer prose still belongs to the narrative extractors and resolver abstention.
+_BARE_NAME_NON_PERSON_PHRASES = (
+    "đồng chí", "công tác", "đơn vị", "chức vụ", "cấp bậc", "sĩ quan",
+    "hạ sĩ quan", "chiến sĩ", "công an", "quân nhân", "quân đội", "cán bộ",
+    "không còn", "không phải", "trước đây", "từng là", "hiện tại", "hiện nay",
+)
+
 LABELS = {
     "subject_name": ["họ và tên", "họ tên", "ho va ten", "ho ten"],
-    "subject_code": ["cccd", "cmnd", "số hiệu", "so hieu", "mã cá nhân", "ma ca nhan"],
+    # "Mã số cán bộ" is what the entry form calls this field and what it writes into
+    # the text it composes, so it has to be recognized here or the platform cannot
+    # read back a dossier it wrote itself.
+    "subject_code": [
+        "cccd", "cmnd", "số hiệu", "so hieu", "mã cá nhân", "ma ca nhan",
+        "mã số cán bộ", "ma so can bo", "mã cán bộ", "ma can bo", "mã số", "ma so",
+    ],
+    # Not a field of `Extraction` — it has no column — but a labelled year is still a
+    # fact the document carries, and `PersonResolver` narrows a bare-name lookup on
+    # it. `extract()` reads it out of `labelled` into `fields["birth_year"]`.
+    "birth_year": ["năm sinh", "nam sinh", "ngày sinh", "ngay sinh", "sinh năm", "sinh nam"],
     "position": ["chức vụ", "chuc vu", "cấp bậc", "cap bac"],
     "unit_name": ["đơn vị công tác", "don vi cong tac", "cơ quan công tác", "co quan cong tac"],
     # A historical-unit label must be recognized in its own right. It is listed after
@@ -102,9 +121,10 @@ def _looks_like_unit_code(value: str) -> bool:
 def _bare_person_name(text: str) -> str | None:
     """Recognize an intentional name-only lookup without guessing from prose.
 
-    This path is deliberately narrow: one line, 2-6 title-cased alphabetic words,
-    no digits/labels, and no organizational prefix.  Longer free text continues
-    through the evidence-bearing label/narrative extractors below.
+    This path is deliberately narrow: one line, 2-6 alphabetic words, no
+    digits/labels, and no organizational prefix. Case is not evidence of whether a
+    value is a person's name: operators commonly type the lookup entirely in lower
+    or upper case, and PersonResolver owns the actual identity decision.
     """
     value = (text or "").strip().strip(".,;:")
     if not value or "\n" in value or "\r" in value or any(ch.isdigit() for ch in value):
@@ -114,11 +134,12 @@ def _bare_person_name(text: str) -> str | None:
         return None
     if re.match(rf"^(?:{UNIT_PREFIXES})\b", value, flags=re.I):
         return None
+    folded = ascii_key(value)
+    if any(ascii_key(phrase) in folded for phrase in _BARE_NAME_NON_PERSON_PHRASES):
+        return None
     for word in words:
         clean = word.strip("'-")
         if not clean or not all(ch.isalpha() or ch in "'-" for ch in word):
-            return None
-        if not clean[0].isupper():
             return None
     return value
 
@@ -166,11 +187,36 @@ def _inline_label_value(text: str) -> tuple[str | None, str | None, float]:
     return best_field, best_value, best_score
 
 
+def _labelled_list_segments(line: str) -> list[str] | None:
+    """Split a line that is itself a comma-separated list of labelled fields.
+
+    One line can carry a whole dossier — "Họ và tên: A, Năm sinh: B, Chức vụ: C" is
+    what an operator types and what the web client composes from the entry form.
+    Read as a single label/value pair it yields one field whose value is every field
+    after it, so the name ends up holding the entire line.
+
+    Splitting is refused unless at least two of the comma-separated pieces carry a
+    label of their own. That is the difference between a list of fields and a single
+    value that merely contains a comma: "Đơn vị công tác: Cục An ninh mạng, Bộ Công
+    an" is one unit designation and must not be cut in half.
+    """
+    pieces = [piece.strip() for piece in line.split(",")]
+    if len(pieces) < 2:
+        return None
+    labelled = sum(1 for piece in pieces if _inline_label_value(piece)[0] is not None)
+    return pieces if labelled >= 2 else None
+
+
 def label_values_with_evidence(text: str) -> tuple[dict[str, str], dict[str, dict]]:
     """Read line-scoped label/value pairs and retain label-match evidence."""
     found: dict[str, str] = {}
     evidence: dict[str, dict] = {}
+    lines: list[tuple[int, str]] = []
     for line_no, raw_line in enumerate((text or "").splitlines(), start=1):
+        lines.extend(
+            (line_no, piece) for piece in (_labelled_list_segments(raw_line) or [raw_line])
+        )
+    for line_no, raw_line in lines:
         best_field, value, score = _inline_label_value(raw_line)
         if best_field is not None and best_field not in found and value:
             found[best_field] = value
@@ -192,6 +238,34 @@ def _clean_unit(v: str) -> str:
     return re.sub(r"\s+", " ", v).strip(" ,:-")[:500]
 
 
+def _word_spans(value: str) -> list[tuple[str, int, int]]:
+    """Return ASCII-folded words while retaining offsets into the raw value."""
+    return [
+        (ascii_key(match.group(0)), match.start(), match.end())
+        for match in re.finditer(r"[^\W_]+", value or "", flags=re.UNICODE)
+    ]
+
+
+def _marker_spans(value: str, markers: list[str]) -> list[tuple[int, int, str]]:
+    """Find markers accent/case-insensitively without losing raw-text offsets.
+
+    Structure detection uses ASCII-folded tokens, but returned offsets always point
+    into the original text. Extraction can therefore keep the operator's raw wording
+    as evidence instead of storing the normalized copy.
+    """
+    words = _word_spans(value)
+    found: list[tuple[int, int, str]] = []
+    for marker in markers:
+        marker_words = ascii_key(marker).split()
+        if not marker_words:
+            continue
+        width = len(marker_words)
+        for index in range(len(words) - width + 1):
+            if [word for word, _start, _end in words[index:index + width]] == marker_words:
+                found.append((words[index][1], words[index + width - 1][2], marker))
+    return found
+
+
 def _cut_at_markers(value: str, markers: list[str]) -> str:
     """Stop a narrative unit value at the next employment-history marker.
 
@@ -200,30 +274,23 @@ def _cut_at_markers(value: str, markers: list[str]) -> str:
     into one former unit spanning both clauses; the marker itself is the boundary
     that survives OCR, so cut there as well.
     """
-    lowered = value.casefold()
-    cut = len(value)
-    for marker in markers:
-        pos = lowered.find(marker)
-        if 0 <= pos < cut:
-            cut = pos
+    cut = min((start for start, _end, _marker in _marker_spans(value, markers)), default=len(value))
     return value[:cut]
 
 
-def _earliest_marker(lowered: str, markers: list[str]) -> tuple[int, str] | None:
+def _earliest_marker(value: str, markers: list[str]) -> tuple[int, int, str] | None:
     """Find the first marker mentioned, preferring the longest one at that position.
 
     Several markers overlap ("hiện đang công tác tại" contains "đang công tác tại"),
     so scanning in list order could cut the value in the middle of the longer marker
     and leave its tail as part of the unit name.
     """
-    best: tuple[int, str] | None = None
-    for marker in markers:
-        pos = lowered.find(marker)
-        if pos < 0:
-            continue
-        if best is None or pos < best[0] or (pos == best[0] and len(marker) > len(best[1])):
-            best = (pos, marker)
-    return best
+    found = _marker_spans(value, markers)
+    if not found:
+        return None
+    # At the same starting position prefer the longest raw span. This preserves the
+    # old overlap rule for "hiện đang công tác tại" / "đang công tác tại".
+    return min(found, key=lambda item: (item[0], -(item[1] - item[0])))
 
 
 def _line(d: dict):
@@ -512,6 +579,7 @@ def _overall_extraction_confidence(field_scores: dict[str, float], values: dict[
 
 
 def extract(text: str, structured: dict | None = None) -> Extraction:
+    """Pull dossier fields out of parsed text and structure deterministically."""
     structured = structured or {}
     ocr_lines = structured.get("_ocr_lines") or []
     tables = structured.get("_parsed_tables") or []
@@ -519,7 +587,6 @@ def extract(text: str, structured: dict | None = None) -> Extraction:
     template, template_evidence = cccd_template_values(ocr_lines) if ocr_lines else ({}, {})
     table_values, table_evidence = table_key_values(tables)
     labelled, labelled_evidence = label_values_with_evidence(text)
-    lowered = text.casefold()
     parse_method = str(structured.get("_parse_method") or "")
     labelled_source = "labelled_ocr" if parse_method in {"OCR", "PADDLE_OCR", "PDF_HYBRID"} else "labelled_text"
 
@@ -546,20 +613,20 @@ def extract(text: str, structured: dict | None = None) -> Extraction:
         relation_conf = min(0.99, unit_score)
 
     if not current:
-        found_marker = _earliest_marker(lowered, CURRENT_MARKERS)
+        found_marker = _earliest_marker(text, CURRENT_MARKERS)
         if found_marker is not None:
-            pos, marker = found_marker
-            after = text[pos + len(marker):]
+            pos, marker_end, marker = found_marker
+            after = text[marker_end:]
             # A later "trước đây công tác tại ..." clause is a former unit, not part of
             # this one's name; without the cut it is swallowed whole whenever OCR drops
             # the sentence punctuation _clean_unit relies on.
+            marker_evidence = {
+                "source": "narrative_text", "rule": "current_marker", "marker": marker,
+            }
             current = _clean_unit(_cut_at_markers(after, FORMER_MARKERS))
             relation_conf = _RULE_PRIOR["current_marker"]
             field_scores["current_unit"] = relation_conf
-            chosen_evidence["current_unit"] = {
-                "source": "narrative_text", "rule": "current_marker", "marker": marker,
-                "score": relation_conf,
-            }
+            chosen_evidence["current_unit"] = {**marker_evidence, "score": relation_conf}
 
     former: list[str] = []
     # An explicitly labelled historical unit ("Đơn vị công tác cũ: ...") is the
@@ -571,14 +638,19 @@ def extract(text: str, structured: dict | None = None) -> Extraction:
         (labelled_source, labelled.get("former_unit_name"), labelled_evidence.get("former_unit_name")),
     ])
     if labelled_former:
-        former.append(_clean_unit(labelled_former))
+        # A labelled historical unit gets the same cut the narrative branch below
+        # already applies: "Nguyên đơn vị công tác: Cục A, hiện công tác tại Cục B"
+        # on one line otherwise takes the rest of the line, current-unit clause and
+        # all, and files Cục B as part of a former unit's name.
+        former.append(_clean_unit(_cut_at_markers(labelled_former, CURRENT_MARKERS)))
     for marker in FORMER_MARKERS:
-        pos = lowered.find(marker)
-        if pos >= 0:
+        found_marker = _earliest_marker(text, [marker])
+        if found_marker is not None:
+            pos, marker_end, _ = found_marker
             # Symmetrically: stop at whichever marker comes next, so a current-unit
             # clause running on from this one is not absorbed into the former unit.
             value = _clean_unit(
-                _cut_at_markers(text[pos + len(marker):], CURRENT_MARKERS + FORMER_MARKERS)
+                _cut_at_markers(text[marker_end:], CURRENT_MARKERS + FORMER_MARKERS)
             )
             if value and value not in former:
                 former.append(value)
@@ -602,6 +674,19 @@ def extract(text: str, structured: dict | None = None) -> Extraction:
         ("spatial", spatial.get("subject_name"), spatial_evidence.get("subject_name")),
         (labelled_source, labelled.get("subject_name"), labelled_evidence.get("subject_name")),
     ])
+    if not name:
+        # ASCII-folded structure detection handles lowercase/unaccented narrative
+        # input while slicing the value from the untouched raw text. A current/former
+        # unit marker gives the otherwise ambiguous end boundary of the person's name.
+        subject_marker = _earliest_marker(text, ["đồng chí"])
+        unit_marker = _earliest_marker(text, CURRENT_MARKERS + FORMER_MARKERS)
+        if subject_marker and unit_marker and subject_marker[1] <= unit_marker[0]:
+            candidate = text[subject_marker[1]:unit_marker[0]].strip(" \t,:;-–—.")
+            name = _bare_person_name(candidate)
+            if name:
+                name_source, name_ev = "narrative_text", {
+                    "rule": "narrative_name", "conf": 1.0, "marker": subject_marker[2]
+                }
     if not name:
         m = re.search(r"(?i:đồng chí)[^\S\n]*[:\-]?[^\S\n]*([A-ZÀ-ỸĐ][\wÀ-ỹđ]+(?:[^\S\n]+[A-ZÀ-ỸĐ][\wÀ-ỹđ]*){1,5})", text)
         if m:
@@ -641,7 +726,15 @@ def extract(text: str, structured: dict | None = None) -> Extraction:
         (labelled_source, labelled.get("position"), labelled_evidence.get("position")),
     ])
     if not position:
-        m = re.search(r"(?:chức vụ)[^\S\n]*[:\-]?[^\S\n]*([^.;\n]{2,100})", text, flags=re.I)
+        # The label itself can be qualified ("Chức vụ hiện tại: ..."). Without the
+        # qualifier in the pattern the match stops after "chức vụ" and the value
+        # carries the rest of the label — "hiện tại: trưởng công an phường ...".
+        m = re.search(
+            r"(?:chức vụ|chức danh|cấp bậc)(?:[^\S\n]+hiện[^\S\n]+(?:tại|nay))?"
+            r"[^\S\n]*[:\-]?[^\S\n]*([^.;\n]{2,100})",
+            text,
+            flags=re.I,
+        )
         if m:
             position = m.group(1).strip()
             position_source, position_ev = "narrative_text", {"rule": "regex_position", "conf": 1.0}
@@ -652,6 +745,27 @@ def extract(text: str, structured: dict | None = None) -> Extraction:
 
     values = {"subject_name": name, "subject_code": code, "position": position, "current_unit": current}
     conf = _overall_extraction_confidence(field_scores, values)
+
+    # A birth year is not one of the four fields the completeness score weighs and
+    # has no column of its own, but it is a fact the document carries and the one
+    # `PersonResolver` narrows a bare-name lookup on. Carrying it in `fields` keeps
+    # it visible to the API projection (as `unit_code` already is) without a
+    # migration, and an operator-supplied value outranks a labelled one.
+    # Read from the same sources as every other field, in the same order. Taking it
+    # from the text alone missed every scan that puts the label on its own line
+    # ("Năm sinh:" above "1985"), which is the shape a transcript often has.
+    birth_year, _, _ = _pick([
+        ("structured", (structured.get("business_fields") or {}).get("birth_year"),
+         {"rule": "structured_input"}),
+        ("table", table_values.get("birth_year"), table_evidence.get("birth_year")),
+        ("spatial", spatial.get("birth_year"), spatial_evidence.get("birth_year")),
+        (labelled_source, labelled.get("birth_year"), labelled_evidence.get("birth_year")),
+    ])
+    if birth_year:
+        # A label can carry a full date; the year is what is usable downstream, and
+        # it is still a span of the input rather than a reformatted date.
+        years = re.findall(r"\b(1[89]\d{2}|20\d{2})\b", str(birth_year))
+        birth_year = years[-1] if years else None
 
     return Extraction(
         name,
@@ -671,6 +785,7 @@ def extract(text: str, structured: dict | None = None) -> Extraction:
             "field_evidence": chosen_evidence,
             "confidence_method": "field-evidence-v1-uncalibrated",
             "unit_code": unit_code,
+            "birth_year": str(birth_year) if birth_year not in (None, "") else None,
         },
         unit_code=unit_code,
     )

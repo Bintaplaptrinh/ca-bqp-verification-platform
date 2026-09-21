@@ -18,13 +18,14 @@ from cabqp.shared.models import (
     AuditLog,
     Case,
     EligibilityAssessment,
+    Person,
     PolicyRule,
     ReviewCase,
     Source,
     Unit,
     VerificationResult,
 )
-from cabqp.shared.normalization import normalize_text
+from cabqp.shared.normalization import ascii_key, normalize_text
 from cabqp.shared.schemas import ReviewDecision
 
 
@@ -75,13 +76,32 @@ def seed_required_policy(db: Session, *, effective_from: date = date(2025, 1, 1)
     return rule
 
 
+def seed_person(db: Session, unit: Unit) -> Person:
+    person = Person(
+        id="person_nguyen_van_a",
+        full_name="Nguyễn Văn A",
+        normalized_key=normalize_text("Nguyễn Văn A"),
+        ascii_key=ascii_key("Nguyễn Văn A"),
+        canonical_unit_id=unit.id,
+        employment_status="ACTIVE",
+        subject_group_hint="CAND",
+        qa_status="APPROVED",
+        source_kind="PROVIDED",
+        active=True,
+    )
+    db.add(person)
+    db.flush()
+    return person
+
+
 def reviewer() -> Principal:
     return reviewer_principal("reviewer", coverage_groups={"*"})
 
 
 def test_policy_missing_required_fact_routes_case_to_review_and_is_audited():
     db = db_session()
-    seed_unit(db)
+    unit = seed_unit(db)
+    seed_person(db, unit)
     seed_required_policy(db)
     structured = {
         "subject_name": "Nguyễn Văn A",
@@ -110,7 +130,8 @@ def test_policy_missing_required_fact_routes_case_to_review_and_is_audited():
 
 def test_policy_effective_date_comes_from_case_not_wall_clock():
     db = db_session()
-    seed_unit(db)
+    unit = seed_unit(db)
+    seed_person(db, unit)
     seed_required_policy(db, effective_from=date(2026, 1, 1))
     structured = {
         "subject_name": "Nguyễn Văn A",

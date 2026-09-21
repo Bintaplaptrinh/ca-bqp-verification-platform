@@ -261,15 +261,17 @@ def test_negation_separated_by_a_copula_is_detected_for_bqp():
     assert group is None
 
 
-def test_negation_after_keyword_is_not_yet_detected():
-    """Documents negation-detection only looks backward from the keyword: a negation
-    placed AFTER the keyword (a common Vietnamese phrasing) is not caught today. This
-    test pins the current behavior so a future fix is a deliberate, visible change."""
-    group, confidence, method = classify_subject_group(
-        organization_type="BCA",
-        position=None,
-        text="Đồng chí từng là sĩ quan công an, nhưng nay không còn công tác trong ngành.",
-        fields={},
-    )
-    assert group == "CAND"
-    assert method == "RULE_TEXT"
+def test_historical_role_followed_by_current_exit_is_not_current_membership():
+    for text in (
+        "Đồng chí từng là sĩ quan công an, nhưng nay không còn công tác trong ngành.",
+        "dong chi tung la si quan cong an nhung nay khong con cong tac trong nganh",
+    ):
+        group, confidence, method = classify_subject_group(
+            organization_type="BCA",
+            position=None,
+            text=text,
+            fields={},
+        )
+        assert group is None, text
+        assert confidence == 0.0
+        assert method == "INSUFFICIENT_EVIDENCE"

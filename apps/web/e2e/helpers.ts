@@ -162,10 +162,13 @@ export async function submitForm(
 }
 
 export async function waitForResultState(page: Page) {
-  const verified = page.getByText('Đơn vị thuộc phạm vi quản lý');
-  const ambiguous = page.getByText('Có nhiều kết quả phù hợp');
-  const noConclusion = page.getByText('Không có trong dữ liệu quản lý CA/BQP');
-  await expect(verified.or(ambiguous).or(noConclusion).first()).toBeVisible({ timeout: 45_000 });
+  const verified = page.getByRole('heading', { name: /^Đơn vị thuộc Bộ (Công an|Quốc phòng)$/ });
+  const outOfScope = page.getByRole('heading', {
+    name: 'Đơn vị không thuộc Bộ Quốc phòng hay Bộ Công an',
+    exact: true,
+  });
+  const noConclusion = page.getByRole('heading', { name: 'Chưa có kết luận', exact: true });
+  await expect(verified.or(outOfScope).or(noConclusion).first()).toBeVisible({ timeout: 45_000 });
 }
 
 /**

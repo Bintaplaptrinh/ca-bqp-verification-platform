@@ -20,6 +20,6 @@ test('text query resolves to a verified result with real backend data', async ({
   await submitTextQuery(page, KNOWN_MATCHED_TEXT);
   await waitForResultState(page);
 
-  await expect(page.getByText('Đơn vị thuộc phạm vi quản lý')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Đơn vị thuộc Bộ (Công an|Quốc phòng)$/ })).toBeVisible();
   await expect(page.getByText('Nguyễn Văn Minh', { exact: true })).toBeVisible();
 });

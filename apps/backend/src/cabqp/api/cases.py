@@ -29,6 +29,7 @@ from cabqp.shared.models import (
     OutboxEvent,
     PolicyRule,
     ReviewCase,
+    Unit,
     VerificationResult,
 )
 from cabqp.shared.schemas import CaseCreate
@@ -458,32 +459,22 @@ def list_cases(
             VerificationResult.organization_type,
         )
     ).all()
-    # A Case awaiting a human is "cần xác minh" whatever label the resolver left on
-    # it. Counting only AMBIGUOUS/CONFLICT filed every other abstention — NOT_FOUND,
-    # a failed parse gate, a low-confidence extraction — under "chưa có kết luận",
-    # which understated the review queue and contradicted the per-row badges.
-    verified = sum(
-        row.n
-        for row in breakdown
-        if row.workflow_status != "NEED_REVIEW"
-        and row.resolution_status == "MATCHED"
-        and row.organization_type in ("BCA", "BQP")
-    )
-    need_review = sum(
-        row.n
-        for row in breakdown
-        if row.workflow_status == "NEED_REVIEW"
-        or row.resolution_status in ("AMBIGUOUS", "CONFLICT")
-    )
-    # "Ngoài phạm vi" is a decided outcome with a resolved unit behind it, counted
-    # apart from "chưa có kết luận" so NOT_FOUND and OTHER are never one figure.
-    out_of_scope = sum(
-        row.n
-        for row in breakdown
-        if row.workflow_status != "NEED_REVIEW"
-        and row.resolution_status == "MATCHED"
-        and row.organization_type == "OTHER"
-    )
+    # These tiles report the unit-membership conclusion, not every remaining review
+    # task on the wider dossier. Use the same projection as each row and the detail
+    # endpoint so no surface can disagree about the result category.
+    category_totals = {
+        "VERIFIED": 0,
+        "NEED_REVIEW": 0,
+        "OUT_OF_SCOPE": 0,
+        "NO_CONCLUSION": 0,
+    }
+    for row in breakdown:
+        category = _result_status_category(
+            row.workflow_status,
+            row.resolution_status,
+            row.organization_type,
+        )
+        category_totals[category] += row.n
     items = list(
         db.scalars(
             q.order_by(Case.created_at.desc())
@@ -513,8 +504,12 @@ def list_cases(
                 "created_by": x.created_by,
                 "created_at": x.created_at,
                 "subject_name": extracted_by_case[x.id].subject_name if x.id in extracted_by_case else None,
+                # The top-level key carries the operator-supplied year *or* the one
+                # extraction found in free text; the nested path is where rows
+                # written before that key existed still keep the former.
                 "birth_year": (
-                    (extracted_by_case[x.id].extracted_fields or {})
+                    (extracted_by_case[x.id].extracted_fields or {}).get("birth_year")
+                    or (extracted_by_case[x.id].extracted_fields or {})
                     .get("structured", {})
                     .get("business_fields", {})
                     .get("birth_year")
@@ -524,25 +519,224 @@ def list_cases(
                 "subject_code": extracted_by_case[x.id].subject_code if x.id in extracted_by_case else None,
                 "organization_type": result_by_case[x.id].organization_type if x.id in result_by_case else "UNKNOWN",
                 "resolution_status": result_by_case[x.id].resolution_status if x.id in result_by_case else None,
+                "status_category": _result_status_category(
+                    x.workflow_status,
+                    result_by_case[x.id].resolution_status if x.id in result_by_case else None,
+                    result_by_case[x.id].organization_type if x.id in result_by_case else "UNKNOWN",
+                ),
             }
             for x in items
         ],
         "total": total,
         # Counted over the caller's whole scoped queue, so they stay correct
-        # past one page. A case with no result row, or one that resolved to
-        # anything else, falls into no_conclusion; it is deliberately the
-        # remainder rather than its own predicate, so the buckets always add up.
-        # The predicates above are mutually exclusive, which is what keeps the
-        # remainder non-negative.
+        # past one page. Every row is projected by _result_status_category,
+        # keeping these mutually exclusive buckets aligned with the row badge.
         "totals": {
             "all": total,
-            "verified": verified,
-            "need_review": need_review,
-            "out_of_scope": out_of_scope,
-            "no_conclusion": total - verified - need_review - out_of_scope,
+            "verified": category_totals["VERIFIED"],
+            "need_review": category_totals["NEED_REVIEW"],
+            "out_of_scope": category_totals["OUT_OF_SCOPE"],
+            "no_conclusion": category_totals["NO_CONCLUSION"],
         },
         "page": page,
         "page_size": page_size,
+    }
+
+
+def _manual_review_scope(db: Session, result: VerificationResult | None) -> str:
+    """Derive queue scope from authoritative unit data, otherwise fail closed."""
+    if result and result.unit_id:
+        unit = db.get(Unit, result.unit_id)
+        if unit and unit.coverage_group:
+            return unit.coverage_group
+    candidates = (result.top_candidates or [])[:5] if result else []
+    groups = {row.get("coverage_group") for row in candidates if row.get("coverage_group")}
+    return next(iter(groups)) if len(groups) == 1 else "UNASSIGNED"
+
+
+def _submitted_unit_fields(case: Case, record: ExtractedRecord | None) -> dict:
+    """Recover the unit exactly as submitted/extracted, without calling it canonical.
+
+    Older records are not uniform: some have ``current_unit_raw`` populated, while
+    structured/form and bulk Cases can retain the value only in ``input_payload`` or
+    in the structured extraction snapshot.  The review screen needs all of those
+    historical shapes, but must keep them separate from the resolver's conclusion.
+    """
+    payload = case.input_payload if isinstance(case.input_payload, dict) else {}
+    extracted_fields = (
+        record.extracted_fields
+        if record and isinstance(record.extracted_fields, dict)
+        else {}
+    )
+    structured = extracted_fields.get("structured")
+    structured = structured if isinstance(structured, dict) else {}
+    payload_business = payload.get("business_fields")
+    payload_business = payload_business if isinstance(payload_business, dict) else {}
+    structured_business = structured.get("business_fields")
+    structured_business = (
+        structured_business if isinstance(structured_business, dict) else {}
+    )
+
+    def first_present(*values):
+        return next((value for value in values if value not in (None, "")), None)
+
+    return {
+        "name": first_present(
+            record.current_unit_raw if record else None,
+            extracted_fields.get("current_unit"),
+            extracted_fields.get("unit_name"),
+            structured.get("unit_name"),
+            structured.get("current_unit"),
+            payload.get("unit_name"),
+            payload.get("current_unit"),
+            structured_business.get("unit_name"),
+            structured_business.get("current_unit"),
+            payload_business.get("unit_name"),
+            payload_business.get("current_unit"),
+        ),
+        "code": first_present(
+            extracted_fields.get("unit_code"),
+            structured.get("unit_code"),
+            payload.get("unit_code"),
+            structured_business.get("unit_code"),
+            payload_business.get("unit_code"),
+        ),
+    }
+
+
+def _manual_review_payload(
+    case: Case,
+    result: VerificationResult | None,
+    record: ExtractedRecord | None,
+) -> dict:
+    """Capture the same evidence shape the queue understands for a user request."""
+    evidence = (result.evidence or {}) if result else {}
+    person = evidence.get("person_resolution") or {}
+    structured = case.input_payload or {}
+    business_fields = structured.get("business_fields") or {}
+    submitted_unit = _submitted_unit_fields(case, record)
+    return {
+        "subject": {
+            "name": person.get("full_name") or (record.subject_name if record else None),
+            "subject_code": record.subject_code if record else None,
+            "position": record.position if record else None,
+            "birth_year": person.get("birth_year")
+            or ((record.extracted_fields or {}).get("birth_year") if record else None)
+            or business_fields.get("birth_year"),
+        },
+        "resolution": {
+            "status": result.resolution_status if result else None,
+            "organization_type": result.organization_type if result else "UNKNOWN",
+            "unit_id": result.unit_id if result else None,
+            "canonical_name": evidence.get("canonical_name"),
+            "match_method": result.match_method if result else None,
+            "score": result.resolution_score if result else None,
+            "margin": result.candidate_margin if result else None,
+            "registry_version": result.registry_version if result else None,
+        },
+        "confidence": {
+            "decision": result.decision_confidence if result else None,
+            "resolution": evidence.get("resolution_confidence"),
+            "extraction": record.extraction_confidence if record else None,
+            "relation": record.relation_confidence if record else None,
+            "subject_group": evidence.get("subject_group_confidence"),
+        },
+        "case": {
+            "created_by": case.created_by,
+            "input_type": case.input_type,
+            "created_at": case.created_at.isoformat() if case.created_at else None,
+        },
+        "top_candidates": result.top_candidates if result else [],
+        "person_resolution": person or None,
+        "current_unit_raw": submitted_unit["name"],
+        "current_unit_code": submitted_unit["code"],
+        "former_units": record.former_units if record else [],
+        "business_fields": business_fields,
+        "subject_group": result.subject_group if result else None,
+        "subject_group_method": evidence.get("subject_group_method"),
+        "parse_method": evidence.get("parse_method"),
+        "parse_confidence": evidence.get("parse_confidence"),
+        "parse_quality": evidence.get("parse_quality") or {},
+        "extraction_confidence": record.extraction_confidence if record else None,
+        "field_confidence": ((record.extracted_fields or {}).get("field_confidence") or {})
+        if record
+        else {},
+        "field_evidence": ((record.extracted_fields or {}).get("field_evidence") or {})
+        if record
+        else {},
+        "policy_assessments": evidence.get("policy_summary") or [],
+        "as_of_date": evidence.get("policy_as_of_date") or structured.get("as_of_date"),
+        "requested_by": case.created_by,
+    }
+
+
+@router.post("/{case_id}/review-request", status_code=201)
+def request_case_review(
+    case_id: str,
+    db: Session = Depends(get_db),
+    p: Principal = Depends(require_perms(perms.CASE_CREATE)),
+):
+    """Send an inconclusive Case to the human-review queue, idempotently."""
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(404, "Case not found")
+    _authorize(db, case, p)
+
+    result = db.scalar(select(VerificationResult).where(VerificationResult.case_id == case.id))
+    category = _result_status_category(
+        case.workflow_status,
+        result.resolution_status if result else None,
+        result.organization_type if result else None,
+    )
+    if category in {"VERIFIED", "OUT_OF_SCOPE"}:
+        raise HTTPException(409, "Hồ sơ đã có kết luận, không thể gửi đối soát")
+    if case.workflow_status in {"RECEIVED", "PROCESSING"}:
+        raise HTTPException(409, "Hồ sơ đang được xử lý, chưa thể gửi đối soát")
+    if result is None:
+        raise HTTPException(409, "Hồ sơ chưa có kết quả để cán bộ thẩm định đối soát")
+
+    existing = db.scalar(
+        select(ReviewCase)
+        .where(ReviewCase.case_id == case.id, ReviewCase.status == "OPEN")
+        .order_by(ReviewCase.created_at.desc())
+        .limit(1)
+    )
+    if existing:
+        return {
+            "review_id": existing.id,
+            "status": existing.status,
+            "case_status": case.workflow_status,
+            "already_requested": True,
+        }
+
+    record = db.scalar(
+        select(ExtractedRecord).where(ExtractedRecord.case_id == case.id).limit(1)
+    )
+    review = ReviewCase(
+        case_id=case.id,
+        result_id=result.id,
+        reason="USER_REQUESTED_RECONCILIATION",
+        coverage_group=_manual_review_scope(db, result),
+        payload=_manual_review_payload(case, result, record),
+    )
+    db.add(review)
+    case.workflow_status = "NEED_REVIEW"
+    db.flush()
+    audit(
+        db,
+        actor=p.username,
+        role=next(iter(p.roles), None),
+        action="REVIEW_REQUEST",
+        entity_type="REVIEW",
+        entity_id=review.id,
+        metadata={"case_id": case.id, "reason": review.reason},
+    )
+    db.commit()
+    return {
+        "review_id": review.id,
+        "status": review.status,
+        "case_status": case.workflow_status,
+        "already_requested": False,
     }
 
 
@@ -580,12 +774,24 @@ def get_case(
         or (extracted.subject_name if extracted else None),
         "code": extracted.subject_code if extracted else None,
         "position": extracted.position if extracted else None,
+        # A matched person's registered year is the authoritative one; otherwise
+        # whatever the operator supplied or the document carried.
+        "birth_year": ((person or {}).get("birth_year") if person else None)
+        or ((extracted.extracted_fields or {}).get("birth_year") if extracted else None),
     }
+    submitted_unit = _submitted_unit_fields(c, extracted)
     synthetic_welfare_facts = None
     if person and person.get("source_kind") == "SYNTHETIC_DEMO":
         synthetic_welfare_facts = person.get("synthetic_welfare_facts")
+    open_review = db.scalar(
+        select(ReviewCase)
+        .where(ReviewCase.case_id == case_id, ReviewCase.status == "OPEN")
+        .order_by(ReviewCase.created_at.desc())
+        .limit(1)
+    )
     return {
         "subject": subject,
+        "submitted_unit": submitted_unit,
         "current_unit": (r.evidence or {}).get("canonical_name") if r else None,
         "organization_type": r.organization_type if r else "UNKNOWN",
         "subject_group": r.subject_group if r else None,
@@ -601,6 +807,14 @@ def get_case(
         "verification_status": _verification_status(c, r),
         "evidence": r.evidence if r else None,
         "person": person,
+        "review_request": None
+        if not open_review
+        else {
+            "id": open_review.id,
+            "status": open_review.status,
+            "created_at": open_review.created_at,
+            "reason": open_review.reason,
+        },
         "case": {
             "id": c.id,
             "workflow_status": c.workflow_status,
@@ -630,6 +844,7 @@ def get_case(
             "position": extracted.position,
             "current_unit_raw": extracted.current_unit_raw,
             "unit_code": (extracted.extracted_fields or {}).get("unit_code"),
+            "birth_year": (extracted.extracted_fields or {}).get("birth_year"),
             "former_units": extracted.former_units,
             "extraction_confidence": extracted.extraction_confidence,
             "relation_confidence": extracted.relation_confidence,
@@ -670,6 +885,23 @@ def get_case(
     }
 
 
+def _result_status_category(
+    workflow_status: str,
+    resolution_status: str | None,
+    organization_type: str | None,
+) -> str:
+    """Project the unit-membership result independently from other review work."""
+    if workflow_status == "FAILED":
+        return "NO_CONCLUSION"
+    if resolution_status == "MATCHED" and organization_type in ("BCA", "BQP"):
+        return "VERIFIED"
+    if resolution_status == "MATCHED" and organization_type == "OTHER":
+        return "OUT_OF_SCOPE"
+    if workflow_status == "NEED_REVIEW" or resolution_status in ("AMBIGUOUS", "CONFLICT"):
+        return "NEED_REVIEW"
+    return "NO_CONCLUSION"
+
+
 def _verification_status(case: Case, result: VerificationResult | None) -> str:
     """Operator-facing wording for what was actually concluded about this Case.
 
@@ -677,18 +909,22 @@ def _verification_status(case: Case, result: VerificationResult | None) -> str:
     that reached no unit. ``NOT_FOUND`` is deliberately *not* merged into ``OTHER``
     — "outside BCA/BQP" is a conclusion, "not identified" is the absence of one.
     """
-    if case.workflow_status == "NEED_REVIEW":
-        return "Cần xác minh"
     if case.workflow_status == "FAILED":
         return "Không xử lý được"
+    category = _result_status_category(
+        case.workflow_status,
+        result.resolution_status if result else None,
+        result.organization_type if result else None,
+    )
+    if category == "VERIFIED":
+        return "Đã xác định"
+    if category == "OUT_OF_SCOPE":
+        return "Ngoài phạm vi CA/BQP"
+    if category == "NEED_REVIEW":
+        return "Chưa có kết luận"
     if case.workflow_status != "COMPLETED":
         return "Đang xử lý"
-    if result is not None and result.resolution_status == "MATCHED":
-        if result.organization_type == "OTHER":
-            return "Ngoài phạm vi CA/BQP"
-        if result.organization_type in ("BCA", "BQP"):
-            return "Đã xác định"
-    return "Chưa xác định được đơn vị"
+    return "Chưa có kết luận"
 
 
 def _split_group_key(result: VerificationResult | None) -> tuple[str | None, dict]:

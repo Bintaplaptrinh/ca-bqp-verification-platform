@@ -14,8 +14,18 @@ from cabqp.modules.bulk.service import process_bulk_row, profile_and_validate, r
 from cabqp.modules.document_intelligence.quality import MetricState, evaluate_quality
 from cabqp.modules.document_intelligence.router import route_input
 from cabqp.shared.db import Base
-from cabqp.shared.models import BulkIngestJob, BulkIngestRow, Case, ReviewCase, RowError, Source, Unit
-from cabqp.shared.normalization import normalize_text
+from cabqp.shared.models import (
+    BulkIngestJob,
+    BulkIngestRow,
+    Case,
+    Person,
+    PersonCode,
+    ReviewCase,
+    RowError,
+    Source,
+    Unit,
+)
+from cabqp.shared.normalization import ascii_key, normalize_text
 
 
 def db_session() -> Session:
@@ -145,6 +155,33 @@ def test_golden_batch_50_contract_and_idempotency():
         source_id=src.id,
         coverage_group='TEST',
     ))
+    db.flush()
+
+    # Every valid row supplies both person identity and CURRENT_WORK_UNIT, so the
+    # batch contract now needs both registries populated. Rows 41-44 deliberately
+    # keep a malformed unit assertion and must still be the four review cases.
+    for i in [*range(1, 45), 49]:
+        name = f'Nguyễn Văn {i}'
+        person = Person(
+            id=f'p{i}',
+            full_name=name,
+            normalized_key=normalize_text(name),
+            ascii_key=ascii_key(name),
+            canonical_unit_id='u_csgt',
+            subject_group_hint='CAND',
+            employment_status='ACTIVE',
+            qa_status='APPROVED',
+            source_kind='OFFICIAL',
+            active=True,
+        )
+        db.add(person)
+        db.flush()
+        db.add(PersonCode(
+            person_id=person.id,
+            code=(f'{100000000000 + i:012d}' if i < 49 else '999999999999'),
+            namespace='CCCD',
+            qa_status='APPROVED',
+        ))
     db.flush()
 
     rows: list[list[object]] = [['Họ và tên', 'CCCD', 'Chức vụ', 'Đơn vị công tác']]

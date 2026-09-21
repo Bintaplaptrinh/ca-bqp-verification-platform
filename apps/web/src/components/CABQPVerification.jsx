@@ -85,6 +85,8 @@ function buildCaseResultFromDetail(caseId, caseDetail) {
   return {
     case_code: `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}`,
     case_id: caseId,
+    result_id: res?.id || null,
+    review_request: caseDetail?.review_request || null,
     // A case the server has not classified is UNKNOWN, never OTHER: OTHER is a
     // decision ("ngoài phạm vi BCA/BQP") the pipeline has to reach, and
     // NOT_FOUND != OTHER. Likewise an absent resolution/workflow status stays
@@ -98,13 +100,13 @@ function buildCaseResultFromDetail(caseId, caseDetail) {
     fullName: caseDetail?.subject?.name || extracted.subject_name || '',
     subject_code: caseDetail?.subject?.code || extracted.subject_code || '',
     position: caseDetail?.subject?.position || extracted.position || '',
+    // Free-text lookups have no birthYear box to read back, so the year the
+    // pipeline pulled out of the text is the only one the result screens have.
+    birth_year: caseDetail?.subject?.birth_year || extracted.birth_year || '',
     subject_group: caseDetail?.subject_group || null,
     subject_group_method: res?.evidence?.subject_group_method || null,
-    subject_group_confidence: res?.evidence?.subject_group_confidence ?? null,
     taxonomy_version: res?.taxonomy_version || null,
     salary_status: caseDetail?.salary_status || 'Không đủ dữ liệu',
-    // Case-resolution scores from the API are already percentages (0–100).
-    score: typeof res?.score === 'number' ? `${Math.round(res.score)}%` : 'Chưa có',
     evidence: res?.evidence || [],
     topCandidates: Array.isArray(res?.top_candidates) ? res.top_candidates : [],
     eligibility: Array.isArray(caseDetail?.eligibility) ? caseDetail.eligibility : [],
@@ -142,19 +144,19 @@ const POLICY_STATUS_LABELS = {
   UNKNOWN: 'Chưa xác định',
 };
 
-// Which screen a decided Case belongs on. Three outcomes, in this order, because
-// they are not interchangeable: a Case still awaiting a human outranks whatever
-// label the resolver left on it; a resolved unit is a conclusion whether or not it
-// is BCA/BQP; and only a genuinely unresolved Case is "no conclusion". Collapsing
-// MATCHED/OTHER into the last bucket reported an evidenced, out-of-scope result as
-// "Không tìm thấy" — NOT_FOUND != OTHER.
+// The result page answers unit membership. A MATCHED unit is therefore a completed
+// unit conclusion even when the wider dossier still has an open review for a
+// different fact such as subject group or policy eligibility.
 function resolvedStateFromDetail(caseDetail) {
   const res = caseDetail?.result;
   const org = caseDetail?.organization_type || res?.organization_type || 'UNKNOWN';
   const status = caseDetail?.resolution_status || res?.resolution_status;
-  if (caseDetail?.case?.workflow_status === 'NEED_REVIEW') return 'needs-verification';
+  if (caseDetail?.case?.workflow_status === 'FAILED') return 'no-conclusion';
+  if (caseDetail?.in_scope === true) return 'verified';
+  if (caseDetail?.in_scope === false) return 'out-of-scope';
   if (status === 'MATCHED' && (org === 'BCA' || org === 'BQP')) return 'verified';
   if (status === 'MATCHED' && org === 'OTHER') return 'out-of-scope';
+  if (caseDetail?.case?.workflow_status === 'NEED_REVIEW') return 'needs-verification';
   if (status === 'AMBIGUOUS' || status === 'CONFLICT') return 'needs-verification';
   return 'no-conclusion';
 }
@@ -178,14 +180,15 @@ axios.interceptors.response.use(
   }
 );
 
-// Shared derivation for one row of GET /cases. `item` carries workflow_status,
-// resolution_status and organization_type; all three are needed to say what
-// happened to a Case, and the first of them decides on its own whether a human
-// still owns it.
+// Shared derivation for one row of GET /cases. Keep unit conclusions consistent
+// with the detail page; workflow review may concern facts outside unit membership.
 function historyStatusCategory(item) {
-  if (item?.workflow_status === 'NEED_REVIEW') return 'NEED_REVIEW';
+  if (['VERIFIED', 'NEED_REVIEW', 'OUT_OF_SCOPE', 'NO_CONCLUSION'].includes(item?.status_category)) {
+    return item.status_category;
+  }
   if (item?.resolution_status === 'MATCHED' && ['BCA', 'BQP'].includes(item?.organization_type)) return 'VERIFIED';
   if (item?.resolution_status === 'MATCHED' && item?.organization_type === 'OTHER') return 'OUT_OF_SCOPE';
+  if (item?.workflow_status === 'NEED_REVIEW') return 'NEED_REVIEW';
   if (['AMBIGUOUS', 'CONFLICT'].includes(item?.resolution_status)) return 'NEED_REVIEW';
   return 'NO_CONCLUSION';
 }
@@ -290,18 +293,71 @@ function CorrectionNotice({ fields }) {
   );
 }
 
-function structuredPayload(values) {
-  const lines = [
-    values.fullName && `Họ và tên: ${values.fullName.trim()}`,
-    values.birthYear && `Năm sinh: ${values.birthYear.trim()}`,
-    values.identifier && `Mã số cán bộ: ${values.identifier.trim()}`,
-    values.position && `Chức vụ: ${values.position.trim()}`,
-    values.department && `Đơn vị công tác: ${values.department.trim()}`,
-    values.extraInfo && values.extraInfo.trim(),
-  ].filter(Boolean);
+/**
+ * The structured form and the free-text box are two views of the same five fields.
+ * `composeQueryText` renders the form as free text, `formValuesFromCaseDetail` reads
+ * a completed lookup back into the form, and together they keep the two in step.
+ *
+ * Fields are separated by commas because that is what an operator types, and because
+ * it is the boundary the local subject and field extractors cut on, so
+ * a composed text round-trips back into the same fields it came from. The labels are
+ * kept: they cost nothing to read, the labeler strips them off the value again, and
+ * without them a lookup that runs with the labeler switched off has nothing at all to
+ * go on.
+ */
+const SYNCED_FORM_FIELDS = ['fullName', 'birthYear', 'identifier', 'position', 'department', 'extraInfo'];
 
+const FREE_TEXT_COMPOSITION = [
+  ['fullName', 'Họ và tên'],
+  ['birthYear', 'Năm sinh'],
+  ['identifier', 'Mã số cán bộ'],
+  ['position', 'Chức vụ'],
+  ['department', 'Đơn vị công tác'],
+];
+
+function composeQueryText(values) {
+  const parts = FREE_TEXT_COMPOSITION.map(([key, label]) => {
+    const value = (values[key] || '').trim();
+    return value ? `${label}: ${value}` : null;
+  }).filter(Boolean);
+  const extra = (values.extraInfo || '').trim();
+  if (extra) parts.push(extra);
+  return parts.join(', ');
+}
+
+/**
+ * What a finished lookup puts back into the form.
+ *
+ * This is a replace, not a merge. Carrying a previous subject's code or unit forward
+ * because this lookup did not produce that field is how an operator ends up
+ * submitting a mix of two people. A Case with no extraction row at all returns null
+ * and the form is left untouched, because "nothing was read" is not the same fact as
+ * "every field is empty".
+ */
+function formValuesFromCaseDetail(caseDetail) {
+  const extracted = caseDetail?.extracted;
+  if (!extracted) return null;
+  const subject = caseDetail.subject || {};
+  const year = subject.birth_year || extracted.birth_year;
+  return {
+    fullName: subject.name || extracted.subject_name || '',
+    birthYear: year ? String(year) : '',
+    identifier: extracted.subject_code || '',
+    position: extracted.position || '',
+    // The raw unit the document carried, not the canonical name the registry
+    // resolved it to: the form is an input surface, and replacing what the operator
+    // wrote with the registry's spelling would silently rewrite their query.
+    department: extracted.current_unit_raw || '',
+  };
+}
+
+function structuredPayload(values) {
   const payload = {
-    text: lines.join('\n') || values.queryText.trim(),
+    // The same rendering the free-text box shows, so the text stored on the Case is
+    // what the operator actually saw. In this mode it is a record rather than the
+    // input: the structured fields below outrank anything extraction reads back out
+    // of it.
+    text: composeQueryText(values) || values.queryText.trim(),
     input_mode: 'FORM',
     subject_name: values.fullName.trim() || null,
     subject_code: values.identifier.trim() || null,
@@ -320,6 +376,7 @@ export default function CABQPVerification({ user, onLogout }) {
   // of these screens calls endpoints that re-check the same permission, so a
   // caller who reaches one another way gets 403 rather than data.
   const canReview = can(user, P.REVIEW_QUEUE, P.REVIEW_DECIDE);
+  const canRequestReview = can(user, P.CASE_CREATE) && !can(user, P.REVIEW_DECIDE);
   const canAdminUnits = can(user, P.REGISTRY_ADMIN);
   const canAdminPersons = can(user, P.PERSON_REGISTRY_ADMIN);
   const canViewAudit = can(user, P.AUDIT_VIEW);
@@ -422,10 +479,8 @@ export default function CABQPVerification({ user, onLogout }) {
             position: c.position || '',
             identifier: c.subject_code || '',
             orgType: c.organization_type || 'UNKNOWN',
-            // Built from the same precedence as resolvedStateFromDetail so a row and
-            // the detail screen it opens never disagree. workflow_status is what says
-            // a Case is still with a reviewer; reading only resolution_status filed
-            // every NOT_FOUND -> NEED_REVIEW case under "Chưa có kết luận".
+            // Prefer the API's unit-result category. The local fallback uses the
+            // same precedence for cached rows created before status_category existed.
             statusCategory: historyStatusCategory(c),
             appState: historyAppState(c),
             timestamp: new Date(c.created_at).toLocaleString('vi-VN'),
@@ -476,6 +531,32 @@ export default function CABQPVerification({ user, onLogout }) {
   // Dynamic API response state
   const [currentCaseData, setCurrentCaseData] = useState(null);
 
+  /**
+   * Write a finished lookup back into the form, so the structured view and the
+   * free-text view agree on what the pipeline read.
+   *
+   * `keepQueryText` is set only when the operator wrote the text themselves and the
+   * search is theirs: recomposing it there would replace their own phrasing with a
+   * normalised copy, and if the reading was wrong they would have nothing left to
+   * correct. Everywhere else (the form path, reopening a stored Case) the box is a
+   * derived view and is recomposed.
+   */
+  const applyCaseDetailToForm = (caseDetail, { keepQueryText }) => {
+    const synced = formValuesFromCaseDetail(caseDetail);
+    if (!synced) return;
+    setFormValues((prev) => {
+      const next = { ...prev, ...synced };
+      if (!keepQueryText) next.queryText = composeQueryText(next);
+      return next;
+    });
+  };
+
+  // The birth year to show on a result screen. Form entry supplies one directly;
+  // a free-text lookup has no such box, so the value the pipeline extracted from
+  // the text is the only one there is. Reading formValues alone left every
+  // free-text result reporting "Chưa rõ năm sinh" even when the year was found.
+  const resolvedBirthYear = formValues.birthYear || currentCaseData?.birth_year || '';
+
   // Fluid continuous progress animation (appState === 'loading')
   const [loadingProgress, setLoadingProgress] = useState(0);
 
@@ -513,7 +594,14 @@ export default function CABQPVerification({ user, onLogout }) {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormValues((prev) => ({ ...prev, [name]: value }));
+    setFormValues((prev) => {
+      const next = { ...prev, [name]: value };
+      // Editing a form field rewrites the free-text view of the same data. The
+      // reverse is deliberately not immediate: free text only becomes fields once
+      // the pipeline has actually read it, which is what the write-back below does.
+      if (SYNCED_FORM_FIELDS.includes(name)) next.queryText = composeQueryText(next);
+      return next;
+    });
 
     if (name === 'birthYear') {
       const trimmed = value.trim();
@@ -583,15 +671,7 @@ export default function CABQPVerification({ user, onLogout }) {
     try {
       const detailRes = await axios.get(`/api/v1/cases/${item.id}`, { timeout: 5000 });
       const caseDetail = detailRes.data;
-      const extracted = caseDetail.extracted || {};
-      setFormValues((prev) => ({
-        ...prev,
-        queryText: caseDetail.subject?.name || prev.queryText,
-        fullName: caseDetail.subject?.name || extracted.subject_name || '',
-        position: extracted.position || '',
-        department: extracted.current_unit_raw || '',
-        identifier: extracted.subject_code || '',
-      }));
+      applyCaseDetailToForm(caseDetail, { keepQueryText: false });
       setCurrentCaseData(buildCaseResultFromDetail(item.id, caseDetail));
       setAppState(resolvedStateFromDetail(caseDetail));
     } catch (err) {
@@ -630,14 +710,7 @@ export default function CABQPVerification({ user, onLogout }) {
     try {
       const detailRes = await axios.get(`/api/v1/cases/${caseId}`, { timeout: 8000 });
       const caseDetail = detailRes.data;
-      const extracted = caseDetail.extracted || {};
-      setFormValues((prev) => ({
-        ...prev,
-        fullName: caseDetail.subject?.name || extracted.subject_name || '',
-        position: extracted.position || '',
-        department: extracted.current_unit_raw || '',
-        identifier: extracted.subject_code || '',
-      }));
+      applyCaseDetailToForm(caseDetail, { keepQueryText: false });
       setCorrectedFields([]);
       setCurrentCaseData(buildCaseResultFromDetail(caseId, caseDetail));
       setAppState(resolvedStateFromDetail(caseDetail));
@@ -1225,14 +1298,9 @@ export default function CABQPVerification({ user, onLogout }) {
           }
         }
 
-        const extracted = caseDetail.extracted || {};
-        setFormValues((prev) => ({
-          ...prev,
-          fullName: extracted.subject_name || prev.fullName,
-          position: extracted.position || prev.position,
-          department: extracted.current_unit_raw || prev.department,
-          identifier: extracted.subject_code || prev.identifier,
-        }));
+        // Free text the operator wrote themselves stays exactly as they wrote it;
+        // the form is filled from what the pipeline read out of it.
+        applyCaseDetailToForm(caseDetail, { keepQueryText: !usingForm && !isCurrentUpload });
 
         const caseResult = buildCaseResultFromDetail(caseId, caseDetail);
 
@@ -1278,7 +1346,7 @@ export default function CABQPVerification({ user, onLogout }) {
   };
 
   return (
-    <div className="h-screen w-full flex flex-col bg-slate-100 text-slate-900 font-sans antialiased select-none overflow-hidden">
+    <div className="h-screen w-full flex flex-col bg-white text-black font-sans antialiased select-none overflow-hidden">
       <AppHeader
         user={user}
         roleLabel={ROLE_LABELS[['ADMIN', 'REVIEWER', 'USER'].find((r) => roles.has(r))] || 'Cán bộ nghiệp vụ'}
@@ -1817,8 +1885,32 @@ export default function CABQPVerification({ user, onLogout }) {
               <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
 
               {sidebarTab === 'manual' ? (
-                <form onSubmit={handleSearch} className="space-y-3">
-                  <div>
+                <form onSubmit={handleSearch} noValidate className="space-y-3">
+                  {/* The same two entry modes the first screen offers. Without it the
+                      sidebar showed only the free-text box while `handleSearch` kept
+                      validating against `entryMode`, so a follow-up lookup silently
+                      failed on required fields that were not on screen. */}
+                  <div className="inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
+                    {[
+                      { id: 'form', label: 'Theo biểu mẫu' },
+                      { id: 'text', label: 'Tra cứu tự do' },
+                    ].map((mode) => (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => { setEntryMode(mode.id); setErrors({}); }}
+                        className={`px-2.5 py-1 rounded-md text-[11.5px] font-semibold transition-colors cursor-pointer ${
+                          entryMode === mode.id
+                            ? 'bg-white text-red-700 shadow-xs'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className={entryMode === 'text' ? '' : 'hidden'}>
                     <label className="mb-1.5 block text-[12.5px] font-semibold text-slate-900">
                       Thông tin cần tra cứu
                     </label>
@@ -1840,7 +1932,11 @@ export default function CABQPVerification({ user, onLogout }) {
                     </p>
                   </div>
 
-                  <div className="hidden">
+                  <div className={entryMode === 'form' ? 'space-y-3' : 'hidden'}>
+                  <p className="rounded-md bg-red-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-red-800">
+                    Bắt buộc: <strong>mã số cán bộ</strong> hoặc <strong>họ và tên</strong> (ít nhất một),
+                    và <strong>đơn vị công tác</strong>.
+                  </p>
                   <div>
                     <label className="block text-[12.5px] font-semibold text-slate-900 mb-1">
                       Họ và tên <span className="text-red-500">*</span>
@@ -2157,10 +2253,10 @@ export default function CABQPVerification({ user, onLogout }) {
                       : appState === 'verified'
                       ? 'Đã xác định đơn vị'
                       : appState === 'needs-verification'
-                      ? 'Cần xác minh'
+                      ? 'Chưa có kết luận'
                       : appState === 'out-of-scope'
                       ? 'Ngoài phạm vi CA/BQP'
-                      : 'Không tìm thấy'}
+                      : 'Chưa có kết luận'}
                   </span>
                 </div>
               </div>
@@ -2296,7 +2392,6 @@ export default function CABQPVerification({ user, onLogout }) {
                   // reported MATCHED with BCA or BQP, so there is nothing to
                   // fall back to.
                   const currentOrg = currentCaseData?.organization_type || 'UNKNOWN';
-                  const isBqp = currentOrg === 'BQP';
                   // Name the ministry from the decision, not from a two-way
                   // "BQP or else Bộ Công an" guess: anything that is not BQP is
                   // not automatically BCA.
@@ -2304,7 +2399,6 @@ export default function CABQPVerification({ user, onLogout }) {
                   const eligibility = Array.isArray(currentCaseData?.eligibility) ? currentCaseData.eligibility : [];
                   const subjectGroup = currentCaseData?.subject_group || null;
                   const subjectGroupMethod = currentCaseData?.subject_group_method || null;
-                  const subjectGroupConfidence = currentCaseData?.subject_group_confidence;
                   const taxonomyVersion = currentCaseData?.taxonomy_version || null;
                   const salaryStatus = currentCaseData?.salary_status || 'Không đủ dữ liệu';
                   const hasPolicyConclusion = eligibility.some((item) =>
@@ -2315,36 +2409,11 @@ export default function CABQPVerification({ user, onLogout }) {
                   return (
                     <div className="space-y-5">
                       <CorrectionNotice fields={correctedFields} />
-                      {/* Success Banner */}
-                      <div className="relative overflow-hidden rounded-md bg-white border border-slate-200 shadow-sm">
-                        <div className="p-5 sm:p-6 flex items-start gap-4">
-                          <div className={`w-14 h-14 rounded-md flex items-center justify-center flex-shrink-0 ${
-                            isBqp ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-                          }`}>
-                            <ShieldCheck className="w-8 h-8" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 mb-1">
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
-                                isBqp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                              }`}>
-                                <CheckCircle2 className="w-3 h-3" />
-                                Kết quả đối chiếu chuẩn
-                              </span>
-                            </div>
-                            <h2 className="text-[21px] sm:text-[24px] font-bold text-slate-900 leading-tight">
-                              Đơn vị thuộc phạm vi quản lý{' '}
-                              <span className={isBqp ? 'text-emerald-700' : 'text-red-700'}>
-                                {currentOrgLabel}
-                              </span>
-                            </h2>
-                            <p className="text-[13.5px] text-slate-600 mt-1.5 leading-relaxed">
-                              Đã đối chiếu và xác định đơn vị <strong className="text-slate-800">{canonicalUnit}</strong> thuộc {currentOrgLabel}.
-                              {!subjectGroup && ' Chưa đủ dữ liệu để xác định nhóm đối tượng và chế độ, quyền lợi.'}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
+                      <ResultConclusion
+                        outcome="verified"
+                        organizationLabel={currentOrgLabel}
+                        unitName={canonicalUnit}
+                      />
 
                       {/* 2-Column Info Grid */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -2366,8 +2435,8 @@ export default function CABQPVerification({ user, onLogout }) {
                             <div className="py-2.5 flex justify-between items-center">
                               <span className="text-slate-500 font-medium">Năm sinh</span>
                               <span className="text-slate-900 font-semibold">
-                                {formValues.birthYear
-                                  ? `${formValues.birthYear} (${new Date().getFullYear() - parseInt(formValues.birthYear, 10)} tuổi)`
+                                {resolvedBirthYear
+                                  ? `${resolvedBirthYear} (${new Date().getFullYear() - parseInt(resolvedBirthYear, 10)} tuổi)`
                                   : 'Chưa rõ năm sinh'}
                               </span>
                             </div>
@@ -2416,11 +2485,6 @@ export default function CABQPVerification({ user, onLogout }) {
                               {subjectGroup ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
                               {subjectGroup || 'Chưa xác định nhóm đối tượng'}
                             </span>
-                            {typeof subjectGroupConfidence === 'number' && (
-                              <span className="text-[11px] font-semibold text-slate-500">
-                                Độ tin cậy: {Math.round(subjectGroupConfidence * 100)}%
-                              </span>
-                            )}
                           </div>
                           {(subjectGroupMethod || taxonomyVersion) && (
                             <div className="px-5 pb-1 text-[11.5px] text-slate-500 leading-snug">
@@ -2474,8 +2538,8 @@ export default function CABQPVerification({ user, onLogout }) {
                             { icon: User, label: formValues.fullName ? `Họ tên: ${formValues.fullName}` : 'Chưa có họ tên', verified: Boolean(formValues.fullName) },
                             {
                               icon: Calendar,
-                              label: formValues.birthYear ? `Năm sinh: ${formValues.birthYear}` : 'Chưa có năm sinh',
-                              verified: Boolean(formValues.birthYear),
+                              label: resolvedBirthYear ? `Năm sinh: ${resolvedBirthYear}` : 'Chưa có năm sinh',
+                              verified: Boolean(resolvedBirthYear),
                             },
                             {
                               icon: Building2,
@@ -2593,6 +2657,7 @@ export default function CABQPVerification({ user, onLogout }) {
                     currentCaseData={currentCaseData}
                     onViewOriginalDossier={handleOpenOriginalDossier}
                     onViewDetailedCompare={handleOpenDetailedCompare}
+                    canRequestReview={canRequestReview}
                   />
                 )}
 
@@ -2610,6 +2675,8 @@ export default function CABQPVerification({ user, onLogout }) {
                 {appState === 'no-conclusion' && (
                   <NoConclusionView
                     formValues={formValues}
+                    currentCaseData={currentCaseData}
+                    canRequestReview={canRequestReview}
                     onRetrySearch={() => {
                       setAppState('initial');
                     }}
@@ -2882,7 +2949,7 @@ function subjectRowStatus(item) {
     return { label: 'Đã xác định đơn vị', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
   }
   if (category === 'NEED_REVIEW') {
-    return { label: 'Cần xác minh', className: 'bg-[#FDF0BE] text-amber-800 border-amber-200' };
+    return { label: 'Chưa có kết luận', className: 'bg-[#FDF0BE] text-amber-800 border-amber-200' };
   }
   if (category === 'OUT_OF_SCOPE') {
     return { label: 'Ngoài phạm vi CA/BQP', className: 'bg-slate-100 text-slate-700 border-slate-300' };
@@ -2896,6 +2963,38 @@ const SUBJECT_ORG_LABELS = {
   OTHER: 'Ngoài phạm vi',
   UNKNOWN: 'Chưa xác định',
 };
+
+/**
+ * The operator-facing result has exactly three forms. Keeping them in one
+ * component prevents individual screens from reintroducing a question plus a
+ * separate "Có/Không" answer or turning NOT_FOUND into an out-of-scope claim.
+ */
+function ResultConclusion({ outcome, organizationLabel, unitName, reason }) {
+  const isVerified = outcome === 'verified';
+  const isOutOfScope = outcome === 'out-of-scope';
+  const Icon = isVerified ? ShieldCheck : isOutOfScope ? Info : HelpCircle;
+  const title = isVerified
+    ? `Đơn vị thuộc ${organizationLabel}`
+    : isOutOfScope
+    ? 'Đơn vị không thuộc Bộ Quốc phòng hay Bộ Công an'
+    : 'Chưa có kết luận';
+  const titleClass = isVerified ? 'text-success' : isOutOfScope ? 'text-error' : 'text-warning';
+
+  return (
+    <div role="status" className="alert items-start border border-base-300 bg-white text-black shadow-sm">
+      <Icon className={`h-8 w-8 shrink-0 ${titleClass}`} />
+      <div className="min-w-0">
+        <h2 className={`text-2xl font-bold leading-tight sm:text-3xl ${titleClass}`}>{title}</h2>
+        {unitName && (
+          <p className="mt-2 text-sm leading-relaxed text-black">
+            Đơn vị được xác định: <strong>{unitName}</strong>.
+          </p>
+        )}
+        {reason && <p className="mt-2 text-sm leading-relaxed text-black">{reason}</p>}
+      </div>
+    </div>
+  );
+}
 
 /**
  * The roster of people found in one uploaded document.
@@ -2994,7 +3093,7 @@ function MultiSubjectListView({ group, selectedId, onSelect, onNewLookup }) {
 
 const RECENT_STATUS = {
   VERIFIED: { label: 'Đã xác định', className: 'bg-emerald-100 text-emerald-800' },
-  NEED_REVIEW: { label: 'Cần xác minh', className: 'bg-amber-100 text-amber-800' },
+  NEED_REVIEW: { label: 'Chưa có kết luận', className: 'bg-amber-100 text-amber-800' },
   NO_CONCLUSION: { label: 'Chưa có kết luận', className: 'bg-slate-100 text-slate-600' },
 };
 
@@ -3051,332 +3150,156 @@ function RecentCasesPanel({ items, onOpen, onShowAll }) {
   );
 }
 
-// Sub-Component: Needs Verification View
-function NeedsVerificationView({ candidateName, formValues, currentCaseData, onViewOriginalDossier, onViewDetailedCompare }) {
-  const [selectedRow, setSelectedRow] = useState(1);
-  const [detailTab, setDetailTab] = useState('identity');
+function ReviewRequestButton({ caseData }) {
+  const [request, setRequest] = useState(caseData?.review_request || null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const caseId = caseData?.case_id;
+  const canSubmit = Boolean(caseId && caseData?.result_id && !request);
 
-  const displayName = candidateName || formValues?.fullName || 'Đối tượng xác minh';
-  const displayYear = formValues?.birthYear || 'Chưa có';
+  useEffect(() => {
+    setRequest(caseData?.review_request || null);
+    setError(null);
+  }, [caseData?.case_id, caseData?.review_request]);
 
-  // Real candidates come from the resolver's top_candidates. The resolver takes one
-  // of two shapes depending on how the search was run:
-  //  - unit-name lookup (PersonResolver not involved): same person on every row,
-  //    only the matched unit/org/score differ -> canonical_name/unit_id.
-  //  - person-name lookup (PersonResolver): a different real person matched on every
-  //    row -> full_name/canonical_unit_name/canonical_unit_id.
-  // Normalize both into the exact fields the view below renders, so nothing past
-  // this point needs to branch on which resolver produced the data.
-  const rawCandidates = Array.isArray(currentCaseData?.topCandidates) ? currentCaseData.topCandidates : [];
-  const isPersonLookup = rawCandidates.some((c) => c.full_name || c.canonical_unit_name);
-
-  if (rawCandidates.length === 0) {
-    return (
-      <div className="rounded-md bg-white p-6 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-500">
-            <HelpCircle className="h-5 w-5" />
-          </div>
-          <div className="min-w-0">
-            <h2 className="text-lg font-bold text-slate-900">Chưa đủ dữ liệu để xác định</h2>
-            <p className="mt-1 text-sm leading-relaxed text-slate-600">
-              Hệ thống chưa tìm thấy ứng viên hoặc đơn vị đủ tin cậy để đối chiếu. Hãy bổ sung mã cá nhân,
-              tên đơn vị đầy đủ, chức vụ hoặc tài liệu có căn cứ rõ hơn.
-            </p>
-            {formValues?.queryText && (
-              <div className="mt-4 rounded-md bg-slate-50 px-4 py-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Nội dung đã tra cứu</p>
-                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{formValues.queryText}</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const groupColors = {
-    BCA: 'bg-red-50 text-red-700 border-red-200',
-    BQP: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    OTHER: 'bg-slate-50 text-slate-600 border-slate-200',
-    UNKNOWN: 'bg-slate-50 text-slate-500 border-slate-200',
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await axios.post(`/api/v1/cases/${caseId}/review-request`);
+      setRequest({
+        id: response.data?.review_id,
+        status: response.data?.status || 'OPEN',
+      });
+    } catch (requestError) {
+      setError(
+        requestError?.response?.data?.detail?.message ||
+          requestError?.response?.data?.detail ||
+          'Không thể gửi hồ sơ vào hàng đợi đối soát.'
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
-  const candidates = rawCandidates.map((c, idx) => ({
-    id: idx + 1,
-    subjectName: isPersonLookup ? c.full_name || 'Chưa có' : displayName,
-    subjectYear: isPersonLookup ? c.birth_year || 'Chưa rõ' : displayYear,
-    unitName: c.canonical_name || c.canonical_unit_name || c.unit_id || c.canonical_unit_id || 'Không rõ đơn vị',
-    unitId: c.unit_id || c.canonical_unit_id || 'Chưa có',
-    // A candidate the resolver returned without an organization is UNKNOWN.
-    // Labelling it OTHER would tell the operator it was decided to be outside
-    // BCA/BQP, which is a different thing entirely.
-    orgType: c.organization_type || 'UNKNOWN',
-    orgBadgeClass: groupColors[c.organization_type] || groupColors.UNKNOWN,
-    score: typeof c.score === 'number' ? `${Math.round(c.score)}%` : c.score ?? 'Chưa có',
-  }));
-  const selectedCandidate = candidates.find((c) => c.id === selectedRow) || candidates[0];
+
+  if (!caseId || !caseData?.result_id) return null;
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={submit}
+        disabled={!canSubmit || submitting}
+        className="btn"
+      >
+        {submitting && <span className="loading loading-spinner loading-sm" />}
+        {request ? 'Đã gửi đối soát' : 'Gửi đối soát'}
+      </button>
+      {request && <p className="text-xs text-success">Hồ sơ đang ở hàng đợi thẩm định.</p>}
+      {error && <p role="alert" className="text-xs text-error">{String(error)}</p>}
+    </div>
+  );
+}
+
+// Sub-Component: Needs Verification View
+function NeedsVerificationView({
+  candidateName,
+  formValues,
+  currentCaseData,
+  onViewOriginalDossier,
+  onViewDetailedCompare,
+  canRequestReview,
+}) {
+  const displayName = candidateName || formValues?.fullName || currentCaseData?.fullName || 'Đối tượng xác minh';
+  const displayYear = formValues?.birthYear || currentCaseData?.birth_year || null;
+  const candidates = Array.isArray(currentCaseData?.topCandidates) ? currentCaseData.topCandidates : [];
+  const topCandidate = candidates[0] || null;
+  const candidateNameOrUnit =
+    topCandidate?.full_name ||
+    topCandidate?.canonical_name ||
+    topCandidate?.canonical_unit_name ||
+    currentCaseData?.current_unit ||
+    null;
+  const candidateUnitId = topCandidate?.unit_id || topCandidate?.canonical_unit_id || null;
+  const candidateOrg = topCandidate?.organization_type || currentCaseData?.organization_type || 'UNKNOWN';
+  const isConflict = currentCaseData?.resolution_status === 'CONFLICT';
 
   return (
     <div className="space-y-5">
-      {/* Candidate Table */}
-      <div className="bg-white rounded-md border border-slate-200 shadow-sm p-5">
-        <div className="mb-4 flex items-start gap-3">
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-[#FDF0BE] text-amber-600">
-            <AlertTriangle className="h-[18px] w-[18px]" />
-          </div>
-          <div className="min-w-0 pt-0.5">
-            <h2 className="text-[16px] font-bold text-slate-900">Có nhiều kết quả phù hợp</h2>
-            <p className="mt-0.5 text-[12.5px] leading-relaxed text-slate-500">
-              Chọn một ứng viên bên dưới để kiểm tra trước khi đưa ra kết luận.
-            </p>
-          </div>
-        </div>
-        <div className="mb-4 rounded-md border border-red-100 bg-red-50/60 px-4 py-3 text-sm">
-          <span className="text-slate-500">Thông tin đã nhập:</span>{' '}
-          <strong className="text-slate-900">{displayName}</strong>
-          {displayYear !== 'Chưa có' && <span className="text-slate-600">, năm sinh {displayYear}</span>}
-        </div>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <h3 className="text-[16px] font-bold text-slate-900">
-              {isPersonLookup ? `Đối tượng khớp (${candidates.length} kết quả)` : `Đơn vị khớp (${candidates.length} kết quả)`}
-            </h3>
-            <span className="text-[12px] text-slate-500">
-              {isPersonLookup ? 'Từ danh mục đối tượng, xếp theo mức độ phù hợp' : 'Từ danh mục đơn vị, xếp theo mức độ phù hợp'}
-            </span>
-          </div>
+      <ResultConclusion
+        outcome="no-conclusion"
+        reason={
+          isConflict
+            ? 'Tên và mã đơn vị đang chỉ tới các kết quả khác nhau. Cần bổ sung hoặc sửa thông tin đầu vào.'
+            : 'Dữ liệu hiện có chưa đủ để xác định đơn vị. Có thể bổ sung tên đơn vị đầy đủ, mã đơn vị hoặc hồ sơ gốc.'
+        }
+      />
 
-        </div>
-
-        {/* Mobile Candidates List (< sm) */}
-        <div className="block sm:hidden divide-y divide-slate-100 border border-slate-200 rounded-md overflow-hidden">
-          {candidates.map((cand) => {
-            const isSelected = cand.id === selectedRow;
-            return (
-              <div
-                key={cand.id}
-                onClick={() => setSelectedRow(cand.id)}
-                className={`p-3.5 space-y-2 cursor-pointer transition-colors ${
-                  isSelected ? 'bg-red-50/80' : 'hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900 text-[14px]">{isPersonLookup ? cand.subjectName : cand.unitName}</span>
-                  <span className="text-slate-500 text-[12px] font-mono">#{cand.id}</span>
-                </div>
-                {isPersonLookup && (
-                  <div className="text-[12.5px] text-slate-600">Đơn vị: {cand.unitName}</div>
-                )}
-                <div className="flex items-center gap-2.5 text-[12.5px] text-slate-600">
-                  <span>Độ tin cậy: <strong>{cand.score}</strong></span>
-                  <span className="w-px h-3 bg-slate-300" />
-                  <span>Mã đơn vị: {cand.unitId}</span>
+      {(topCandidate || formValues?.queryText) && (
+        <details className="collapse collapse-arrow border border-base-300 bg-base-100">
+          <summary className="collapse-title font-semibold">Thông tin chi tiết</summary>
+          <div className="collapse-content">
+            <dl className="mb-4 grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+              <div>
+                <dt className="text-base-content/60">Họ và tên</dt>
+                <dd className="font-semibold text-base-content">{displayName}</dd>
+              </div>
+              <div>
+                <dt className="text-base-content/60">Năm sinh</dt>
+                <dd className="font-semibold text-base-content">{displayYear || 'Chưa có'}</dd>
+              </div>
+            </dl>
+            {topCandidate && (
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-base-content/60">Kết quả gần nhất</dt>
+                  <dd className="font-semibold text-base-content">{candidateNameOrUnit || 'Chưa có'}</dd>
                 </div>
                 <div>
-                  <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11.5px] font-semibold border ${cand.orgBadgeClass}`}>
-                    {cand.orgType}
-                  </span>
+                  <dt className="text-base-content/60">Đơn vị quản lý</dt>
+                  <dd className="font-semibold text-base-content">
+                    {SUBJECT_ORG_LABELS[candidateOrg] || SUBJECT_ORG_LABELS.UNKNOWN}
+                  </dd>
                 </div>
-              </div>
-            );
-          })}
-          {candidates.length === 0 && (
-            <div className="p-6 text-center text-slate-400 text-[13px]">Không tìm thấy kết quả phù hợp.</div>
-          )}
-        </div>
-
-        {/* Desktop Candidates Table (>= sm) */}
-        <div className="hidden sm:block overflow-x-auto border border-slate-200 rounded-md">
-          <table className="w-full text-left text-[13.5px] border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-[12.5px] font-bold text-slate-600">
-                <th className="py-3 px-4 w-12 text-center">#</th>
-                {isPersonLookup && <th className="py-3 px-4">Họ và tên</th>}
-                <th className="py-3 px-4">Đơn vị khớp</th>
-                <th className="py-3 px-4">Mã đơn vị</th>
-                <th className="py-3 px-4">Độ tin cậy</th>
-                <th className="py-3 px-4">Tổ chức</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {candidates.map((cand) => {
-                const isSelected = cand.id === selectedRow;
-                return (
-                  <tr
-                    key={cand.id}
-                    onClick={() => setSelectedRow(cand.id)}
-                    className={`cursor-pointer transition-colors ${
-                      isSelected ? 'bg-red-50/80 font-medium' : 'hover:bg-slate-50'
-                    }`}
-                  >
-                    <td className="py-3 px-4 text-center font-bold relative">
-                      <span className={isSelected ? 'text-red-600' : 'text-slate-400'}>{cand.id}</span>
-                    </td>
-                    {isPersonLookup && <td className="py-3 px-4 font-bold text-slate-900">{cand.subjectName}</td>}
-                    <td className="py-3 px-4 font-bold text-slate-900">{cand.unitName}</td>
-                    <td className="py-3 px-4 text-slate-500 font-mono text-[12px]">{cand.unitId}</td>
-                    <td className="py-3 px-4 text-slate-800">{cand.score}</td>
-                    <td className="py-3 px-4">
-                      <span className={`inline-block px-2.5 py-0.5 rounded-full text-[12px] font-semibold border ${cand.orgBadgeClass}`}>
-                        {cand.orgType}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-              {candidates.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-8 text-center text-slate-400">Không tìm thấy kết quả phù hợp.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-md border border-slate-200 shadow-sm p-5">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <span className="px-2.5 py-0.5 rounded-md bg-red-100 text-red-600 font-bold text-[12px] border border-red-200">
-              Hồ sơ #{selectedRow}
-            </span>
-            <h3 className="text-[16px] font-bold text-slate-900">Thông tin chi tiết đối chiếu</h3>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-6 border-b border-slate-200 pt-2 text-[13.5px]">
-          <button
-            onClick={() => setDetailTab('identity')}
-            className={`pb-2.5 font-semibold transition-all relative ${
-              detailTab === 'identity' ? 'text-red-600' : 'text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            Định danh
-            {detailTab === 'identity' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600 rounded-full" />
+                {candidateUnitId && (
+                  <div>
+                    <dt className="text-base-content/60">Mã đơn vị</dt>
+                    <dd className="font-mono font-semibold text-base-content">{candidateUnitId}</dd>
+                  </div>
+                )}
+              </dl>
             )}
-          </button>
-          <button
-            onClick={() => setDetailTab('group')}
-            className={`pb-2.5 font-medium transition-all relative ${
-              detailTab === 'group' ? 'text-red-600 font-semibold' : 'text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            Nhóm đối tượng
-            {detailTab === 'group' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600 rounded-full" />
-            )}
-          </button>
-          <button
-            onClick={() => setDetailTab('benefit')}
-            className={`pb-2.5 font-medium transition-all relative ${
-              detailTab === 'benefit' ? 'text-red-600 font-semibold' : 'text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            Chế độ
-            {detailTab === 'benefit' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600 rounded-full" />
-            )}
-          </button>
-        </div>
-
-        <div className="py-4">
-          {detailTab === 'identity' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[13.5px]">
-              <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
-                <span className="text-slate-500 text-[12px] block">
-                  {isPersonLookup ? `Họ và tên (khớp #${selectedRow}):` : 'Họ và tên (đã nhập):'}
-                </span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.subjectName ?? 'Chưa có'}</span>
-              </div>
-              <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
-                <span className="text-slate-500 text-[12px] block">
-                  {isPersonLookup ? 'Năm sinh (khớp):' : 'Năm sinh (đã nhập):'}
-                </span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.subjectYear ?? 'Chưa có'}</span>
-              </div>
-              <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
-                <span className="text-slate-500 text-[12px] block">Mã hồ sơ:</span>
-                <span className="font-mono font-bold text-red-600 mt-0.5 block">
-                  {formValues?.identifier || currentCaseData?.case_code || 'Chưa có'}
-                </span>
-              </div>
-              <div className="p-3 bg-slate-50 rounded-md border border-slate-200">
-                <span className="text-slate-500 text-[12px] block">Đơn vị đang xem (khớp #{selectedRow}):</span>
-                <span className="font-bold text-slate-900 mt-0.5 block">{selectedCandidate?.unitName ?? 'Chưa có'}</span>
-              </div>
-            </div>
-          )}
-
-          {detailTab === 'group' && (
-            <div className="p-4 bg-[#FDF0BE] border border-amber-200 rounded-md text-[13px] text-amber-900">
-              <p className="font-bold">Chi tiết khớp đơn vị #{selectedRow}:</p>
-              <p className="mt-1">
-                Mã đơn vị <strong>{selectedCandidate?.unitId ?? 'Chưa có'}</strong>, tổ chức{' '}
-                <strong>{selectedCandidate?.orgType ?? 'chưa xác định'}</strong>, mức độ phù hợp{' '}
-                <strong>{selectedCandidate?.score ?? 'Chưa có'}</strong>. Có nhiều hơn một đơn vị khớp tên nên hệ thống
-                không tự động kết luận CA/BQP. Cần thẩm định thủ công để chọn đúng đơn vị công tác hiện tại.
-              </p>
-            </div>
-          )}
-
-          {detailTab === 'benefit' && (
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-md text-[13px] text-slate-900 space-y-2">
-              {(currentCaseData?.subject_group_method || currentCaseData?.taxonomy_version) && (
-                <p className="text-[11.5px] text-slate-500 pb-1 border-b border-slate-200">
-                  {currentCaseData?.subject_group_method &&
-                    (SUBJECT_GROUP_METHOD_LABELS[currentCaseData.subject_group_method] || currentCaseData.subject_group_method)}
-                  {currentCaseData?.taxonomy_version && (
-                    <span className="ml-1 text-slate-400">(bộ tiêu chí {currentCaseData.taxonomy_version})</span>
-                  )}
+            {formValues?.queryText && (
+              <div className={topCandidate ? 'mt-4 border-t border-base-300 pt-4' : ''}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-base-content/60">
+                  Nội dung đã tra cứu
                 </p>
-              )}
-              {Array.isArray(currentCaseData?.eligibility) && currentCaseData.eligibility.length > 0 ? (
-                <div className="space-y-2">
-                  {currentCaseData.eligibility.map((e, i) => (
-                    <div key={i} className="border-b border-slate-200 pb-2 last:border-0 last:pb-0">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">
-                          {e.policy_id}{e.policy_version && <span className="font-mono text-[10.5px] text-slate-400 ml-1">v{e.policy_version}</span>}
-                        </span>
-                        <span className="text-slate-500">{POLICY_STATUS_LABELS[e.status] || 'Chưa xác định'}{e.reason ? `: ${e.reason}` : ''}</span>
-                      </div>
-                      {e.evidence?.as_of_date && (
-                        <p className="text-[11px] text-slate-400 mt-0.5">Tính đến: {e.evidence.as_of_date}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <>
-                  <p className="font-bold">Tình trạng chế độ chi trả:</p>
-                  <p className="mt-1 text-slate-500">
-                    Chưa đủ dữ liệu để đánh giá chế độ cho hồ sơ này hoặc chưa xác định được phạm vi tổ chức.
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-base-content">{formValues.queryText}</p>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
 
-        <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3">
-          <button
-            type="button"
-            onClick={() => onViewOriginalDossier && onViewOriginalDossier(currentCaseData?.case_id)}
-            disabled={!currentCaseData?.case_id}
-            className="px-4 py-2 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-[13px] font-semibold flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <span>Xem hồ sơ gốc</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onViewDetailedCompare && onViewDetailedCompare(currentCaseData?.case_id)}
-            disabled={!currentCaseData?.case_id}
-            className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white text-[13px] font-semibold flex items-center justify-center shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <span>Đối chiếu chi tiết</span>
-          </button>
-        </div>
+      <div className="flex flex-col justify-end gap-2 sm:flex-row">
+        {canRequestReview && <ReviewRequestButton caseData={currentCaseData} />}
+        <button
+          type="button"
+          onClick={() => onViewOriginalDossier && onViewOriginalDossier(currentCaseData?.case_id)}
+          disabled={!currentCaseData?.case_id}
+          className="btn btn-outline"
+        >
+          Xem hồ sơ gốc
+        </button>
+        <button
+          type="button"
+          onClick={() => onViewDetailedCompare && onViewDetailedCompare(currentCaseData?.case_id)}
+          disabled={!currentCaseData?.case_id}
+          className="btn btn-primary"
+        >
+          Xem thông tin chi tiết
+        </button>
       </div>
     </div>
   );
@@ -3392,26 +3315,7 @@ function OutOfScopeView({ currentCaseData, onRetrySearch }) {
   const unitName = currentCaseData?.current_unit || null;
   return (
     <div className="space-y-5">
-      <div className="rounded-md bg-slate-50 border border-slate-300 p-6 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-full bg-white text-slate-600 flex items-center justify-center border border-slate-300 shadow-sm flex-shrink-0">
-            <Info className="w-7 h-7" />
-          </div>
-          <div>
-            <span className="inline-block px-2 py-0.5 rounded text-[11.5px] font-bold uppercase tracking-wider bg-white border border-slate-300 text-slate-600 mb-1">
-              KẾT QUẢ ĐỐI SOÁT
-            </span>
-            <h2 className="text-[22px] sm:text-[24px] md:text-[26px] font-bold text-slate-900 leading-tight">
-              Đã xác định đơn vị, ngoài phạm vi CA/BQP
-            </h2>
-            <p className="text-[14px] text-slate-600 mt-1 leading-relaxed">
-              Đơn vị công tác đã được xác định trong danh mục{unitName ? ` là "${unitName}"` : ''} và
-              không thuộc Bộ Công an hoặc Bộ Quốc phòng. Đây là kết luận có căn cứ, khác với trường
-              hợp không tìm thấy hồ sơ trong danh mục.
-            </p>
-          </div>
-        </div>
-      </div>
+      <ResultConclusion outcome="out-of-scope" unitName={unitName} />
 
       <div className="bg-white rounded-md border border-slate-200 p-5 shadow-sm">
         <h4 className="text-[14.5px] font-bold text-slate-900 mb-3">Thông tin đối tượng</h4>
@@ -3438,7 +3342,7 @@ function OutOfScopeView({ currentCaseData, onRetrySearch }) {
       <button
         type="button"
         onClick={onRetrySearch}
-        className="px-3 py-1.5 rounded-md border border-slate-200 text-[12.5px] font-semibold text-slate-700 hover:bg-slate-50"
+        className="btn btn-outline"
       >
         Tra cứu mới
       </button>
@@ -3447,28 +3351,15 @@ function OutOfScopeView({ currentCaseData, onRetrySearch }) {
 }
 
 // Sub-Component: No Conclusion View
-function NoConclusionView({ formValues, onRetrySearch, onEditInfo }) {
+function NoConclusionView({ formValues, currentCaseData, canRequestReview, onRetrySearch, onEditInfo }) {
   return (
     <div className="space-y-5">
-      {/* Neutral Banner */}
-      <div className="rounded-md bg-slate-50 border border-slate-300 p-6 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-full bg-white text-slate-500 flex items-center justify-center border border-slate-300 shadow-sm flex-shrink-0">
-            <HelpCircle className="w-7 h-7" />
-          </div>
-          <div>
-            <span className="inline-block px-2 py-0.5 rounded text-[11.5px] font-bold uppercase tracking-wider bg-white border border-slate-300 text-slate-600 mb-1">
-              KẾT QUẢ ĐỐI SOÁT
-            </span>
-            <h2 className="text-[22px] sm:text-[24px] md:text-[26px] font-bold text-slate-900 leading-tight">
-              Không có trong dữ liệu quản lý CA/BQP
-            </h2>
-            <p className="text-[14px] text-slate-600 mt-1 leading-relaxed">
-              Không tìm thấy hồ sơ trùng khớp trong dữ liệu quản lý hiện có của Bộ Công an hoặc Bộ Quốc phòng{formValues.identifier ? ` đối với mã định danh "${formValues.identifier}"` : ''}. Kết quả này xác định đối tượng không thuộc phạm vi theo dữ liệu hiện có; không đồng nghĩa với xác nhận pháp lý rằng hồ sơ không tồn tại.
-            </p>
-          </div>
-        </div>
-      </div>
+      <ResultConclusion
+        outcome="no-conclusion"
+        reason={`Không tìm thấy hồ sơ đủ căn cứ để xác định đơn vị trong dữ liệu hiện có${
+          formValues.identifier ? ` đối với mã định danh "${formValues.identifier}"` : ''
+        }. Kết quả này không đồng nghĩa với việc đơn vị nằm ngoài phạm vi quản lý.`}
+      />
 
       {/* Searched Chips */}
       <div className="bg-white rounded-md border border-slate-200 p-5 shadow-sm">
@@ -3502,6 +3393,7 @@ function NoConclusionView({ formValues, onRetrySearch, onEditInfo }) {
           Có thể tra cứu lại với họ tên đầy đủ, mã số cán bộ hoặc tên đơn vị cấp trên, hoặc tải tài liệu gốc để hệ thống đọc thông tin.
         </p>
         <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3">
+          {canRequestReview && <ReviewRequestButton caseData={currentCaseData} />}
           <button
             type="button"
             onClick={onRetrySearch}

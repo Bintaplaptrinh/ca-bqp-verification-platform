@@ -1,5 +1,7 @@
 import re
 
+from cabqp.shared.normalization import ascii_key
+
 # Conservative rule-first subject-group classifier.
 # Unit membership alone never proves force membership.
 
@@ -8,24 +10,38 @@ KNOWN_GROUPS = {"CAND", "QUAN_NHAN", "CO_YEU_HUONG_LUONG_NHU_QUAN_NHAN"}
 # ("không còn là sĩ quan", "không phải một quân nhân"). Anchoring the negation directly
 # against the keyword missed those and reported the subject as serving personnel, so a
 # short run of filler words is allowed — bounded, so the match cannot span a clause.
-_NEGATION_FILLER = r"(?:\s+(?:là|một|đang|hiện|thuộc|trong|biên\s+chế)){0,3}"
+_NEGATION_FILLER = r"(?:\s+(?:la|mot|dang|hien|thuoc|trong|bien\s+che)){0,3}"
 NEGATION = re.compile(
-    r"(?:không\s+phải|không\s+thuộc|không\s+là|chưa\s+phải|chưa\s+là|không\s+còn|thôi\s+không\s+còn)"
+    r"(?:khong\s+phai|khong\s+thuoc|khong\s+la|chua\s+phai|chua\s+la|khong\s+con|thoi\s+khong\s+con)"
     + _NEGATION_FILLER
     + r"\s+$",
+    re.I,
+)
+
+# A historical role is not evidence of present membership when the same clause says
+# the person has since left service. Keep this rule local to the keyword occurrence:
+# an earlier historical mention must not suppress a separate current affirmative.
+PAST_ROLE = re.compile(r"(?:da\s+)?tung\s+la\s+$|truoc\s+day\s+(?:la\s+)?$|nguyen\s+la\s+$", re.I)
+CURRENT_EXIT = re.compile(
+    r"\b(?:nhung\s+)?(?:nay|hien\s+nay|hien\s+tai)\s+"
+    r"(?:da\s+)?(?:khong\s+con|khong)\s+"
+    r"(?:cong\s+tac|phuc\s+vu|thuoc|trong\s+bien\s+che)\b"
+    r"|\b(?:da\s+)?(?:thoi\s+cong\s+tac|xuat\s+ngu|chuyen\s+nganh)\b",
     re.I,
 )
 
 
 def _positive_not_negated(text: str, keyword: str) -> bool:
     start = 0
-    key = keyword.casefold()
+    key = ascii_key(keyword)
     while True:
         idx = text.find(key, start)
         if idx < 0:
             return False
         prefix = text[max(0, idx - 40):idx]
-        if not NEGATION.search(prefix):
+        suffix = text[idx + len(key):idx + len(key) + 140]
+        historical_then_left = bool(PAST_ROLE.search(prefix) and CURRENT_EXIT.search(suffix))
+        if not NEGATION.search(prefix) and not historical_then_left:
             return True
         start = idx + len(key)
 
@@ -39,7 +55,9 @@ def classify_subject_group(*, organization_type: str, position: str | None, text
             return explicit, 1.0, "EXPLICIT_FIELD"
         return None, 0.0, "INVALID_EXPLICIT_GROUP"
 
-    t = " ".join([position or "", text or ""]).casefold()
+    # Classification is structural, so match on an ASCII/lowercase copy while the
+    # caller retains the untouched document as evidence.
+    t = ascii_key(" ".join([position or "", text or ""]))
 
     if organization_type == "BCA":
         for keyword in ["sĩ quan công an", "hạ sĩ quan công an", "chiến sĩ công an", "công an nhân dân", "cand"]:

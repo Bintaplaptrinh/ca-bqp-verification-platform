@@ -228,6 +228,82 @@ def test_bare_name_case_handoff_resolves_org_and_completes():
     assert case.workflow_status == "COMPLETED"
 
 
+def test_form_name_and_unit_runs_both_resolvers_and_accepts_consistency():
+    db = db_session()
+    seed_unit(db, "u1", "Công an Thành phố Hồ Chí Minh", "BCA", coverage="BCA_TEST")
+    seed_person(db, pid="p1", name="Nguyễn Văn An", unit_id="u1")
+    structured = {
+        "text": "x",
+        "input_mode": "FORM",
+        "subject_name": "nguyen van an",
+        "unit_name": "cong an thanh pho ho chi minh",
+        "business_fields": {},
+    }
+    case = Case(created_by="tester", input_type="TEXT", raw_text="x", input_payload=structured)
+    db.add(case)
+    db.flush()
+
+    result = process_case(db, case, structured)
+
+    assert case.workflow_status == "COMPLETED"
+    assert result.evidence["person_resolution"]["person_id"] == "p1"
+    assert result.evidence["person_unit_consistency"] == {
+        "status": "MATCHED",
+        "person_unit_id": "u1",
+        "asserted_unit_id": "u1",
+    }
+
+
+def test_form_person_unit_mismatch_routes_to_specific_review():
+    db = db_session()
+    seed_unit(db, "u_registry", "Công an Thành phố Hồ Chí Minh", "BCA", coverage="BCA_TEST")
+    seed_unit(db, "u_asserted", "Cục Kỹ thuật", "BCA", coverage="BCA_TEST")
+    seed_person(db, pid="p1", name="Nguyễn Văn An", unit_id="u_registry")
+    structured = {
+        "text": "x",
+        "input_mode": "FORM",
+        "subject_name": "nguyen van an",
+        "unit_name": "cuc ky thuat",
+        "business_fields": {},
+    }
+    case = Case(created_by="tester", input_type="TEXT", raw_text="x", input_payload=structured)
+    db.add(case)
+    db.flush()
+
+    result = process_case(db, case, structured)
+    review = db.scalar(select(ReviewCase).where(ReviewCase.case_id == case.id))
+
+    assert case.workflow_status == "NEED_REVIEW"
+    assert review is not None and review.reason == "PERSON_UNIT_CONFLICT"
+    assert result.decision_confidence == 0.0
+    assert result.evidence["person_unit_consistency"] == {
+        "status": "CONFLICT",
+        "person_unit_id": "u_registry",
+        "asserted_unit_id": "u_asserted",
+    }
+
+
+def test_valid_unit_cannot_hide_unknown_person():
+    db = db_session()
+    seed_unit(db, "u1", "Cục Kỹ thuật", "BCA", coverage="BCA_TEST")
+    structured = {
+        "text": "x",
+        "input_mode": "FORM",
+        "subject_name": "nguoi khong co trong danh ba",
+        "unit_name": "cuc ky thuat",
+        "business_fields": {"subject_group": "CAND"},
+    }
+    case = Case(created_by="tester", input_type="TEXT", raw_text="x", input_payload=structured)
+    db.add(case)
+    db.flush()
+
+    process_case(db, case, structured)
+    review = db.scalar(select(ReviewCase).where(ReviewCase.case_id == case.id))
+
+    assert case.workflow_status == "NEED_REVIEW"
+    assert review is not None and review.reason == "PERSON_NOT_FOUND"
+
+
 def test_bare_name_collision_routes_to_person_review():
     db = db_session()
     seed_unit(db, "u1", "Đơn vị BCA", "BCA", coverage="BCA_TEST")
@@ -503,7 +579,7 @@ def test_api_ambiguous_person_preserves_subject_and_never_claims_scope():
         assert body["organization_type"] == "UNKNOWN"
         assert body["in_scope"] is None
         assert body["workflow_status"] == "NEED_REVIEW"
-        assert body["verification_status"] == "Cần xác minh"
+        assert body["verification_status"] == "Chưa có kết luận"
         assert len(body["person"]["candidates"]) == 2
     finally:
         app.dependency_overrides.pop(get_db, None)

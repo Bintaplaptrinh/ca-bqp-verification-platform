@@ -132,7 +132,7 @@ def _status(workflow_status, resolution_status=None, organization_type="UNKNOWN"
 
 def test_a_reviewer_decision_of_unknown_is_not_reported_as_identified():
     """The exact state POST /reviews/{id}/decision leaves behind for UNKNOWN."""
-    assert _status("COMPLETED", "NOT_FOUND", "UNKNOWN") == "Chưa xác định được đơn vị"
+    assert _status("COMPLETED", "NOT_FOUND", "UNKNOWN") == "Chưa có kết luận"
 
 
 def test_verification_status_distinguishes_out_of_scope_from_not_found():
@@ -143,8 +143,9 @@ def test_verification_status_distinguishes_out_of_scope_from_not_found():
     assert _status("COMPLETED", "MATCHED", "OTHER") != _status("COMPLETED", "NOT_FOUND", "UNKNOWN")
 
 
-def test_an_open_review_outranks_whatever_label_the_resolver_left():
-    assert _status("NEED_REVIEW", "MATCHED", "BCA") == "Cần xác minh"
-    assert _status("NEED_REVIEW", "AMBIGUOUS") == "Cần xác minh"
+def test_a_matched_unit_status_is_not_overwritten_by_an_unrelated_open_review():
+    assert _status("NEED_REVIEW", "MATCHED", "BCA") == "Đã xác định"
+    assert _status("NEED_REVIEW", "MATCHED", "OTHER") == "Ngoài phạm vi CA/BQP"
+    assert _status("NEED_REVIEW", "AMBIGUOUS") == "Chưa có kết luận"
     assert _status("FAILED", "NOT_FOUND") == "Không xử lý được"
     assert _status("RECEIVED") == "Đang xử lý"

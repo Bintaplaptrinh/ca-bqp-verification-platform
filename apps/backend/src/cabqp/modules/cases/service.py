@@ -154,9 +154,15 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
             as_of = case.created_at.date() if case.created_at else date.today()
 
     business_fields = dict(structured.get("business_fields") or {})
+    if not business_fields.get("birth_year") and ex.fields.get("birth_year"):
+        # An operator-supplied value already in business_fields always wins. The
+        # extraction field covers deterministic labels in free text, so identity
+        # narrowing uses the same local evidence as the remaining pipeline.
+        business_fields["birth_year"] = ex.fields["birth_year"]
     unit_code = structured.get("unit_code") or ex.unit_code
     person_resolution: PersonResolution | None = None
-    person_lookup = bool((ex.subject_name or ex.subject_code) and not ex.current_unit and not unit_code)
+    person_supplied = bool(ex.subject_name or ex.subject_code)
+    person_lookup = bool(person_supplied and not ex.current_unit and not unit_code)
     # A unit code is the same fact CURRENT_WORK_UNIT carries, expressed as an
     # identifier instead of a name. The document therefore has no free-text unit
     # relation to score, exactly as a bare-name lookup has none, and the generic
@@ -167,7 +173,7 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
     # Both shapes supply identity/unit evidence directly rather than through a
     # narrative relation, and share the same confidence treatment.
     relationless_lookup = person_lookup or unit_code_lookup
-    if person_lookup:
+    if person_supplied:
         raw_birth_year = business_fields.get("birth_year")
         try:
             birth_year = int(raw_birth_year) if raw_birth_year not in (None, "") else None
@@ -179,6 +185,19 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
             birth_year=birth_year,
             as_of_date=as_of,
         )
+
+    # Resolve the asserted CURRENT_WORK_UNIT independently. PersonResolver owns
+    # identity; Resolver owns unit identity and organization type. Keeping both
+    # results lets this application service enforce the cross-registry invariant
+    # instead of using the supplied unit merely as a filter that can hide a mismatch.
+    has_asserted_unit = bool(ex.current_unit or unit_code)
+    if has_asserted_unit:
+        r = Resolver(db).resolve(
+            unit_name=ex.current_unit,
+            unit_code=unit_code,
+            as_of_date=as_of,
+        )
+    elif person_resolution is not None:
         if person_resolution.status == "MATCHED" and person_resolution.canonical_unit_id:
             r = Resolver(db).resolve(
                 unit_id=person_resolution.canonical_unit_id,
@@ -209,11 +228,39 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
             unit_code=unit_code,
             as_of_date=as_of,
         )
+
+    person_unit_conflict = bool(
+        has_asserted_unit
+        and person_resolution is not None
+        and person_resolution.status == "MATCHED"
+        and person_resolution.canonical_unit_id
+        and r.status == "MATCHED"
+        and r.unit_id
+        and person_resolution.canonical_unit_id != r.unit_id
+    )
     person_evidence = _person_resolution_evidence(person_resolution)
     if person_evidence is not None and person_resolution and person_resolution.status != "MATCHED":
         # Candidate unit/org fields are enriched in the case layer through Unit Resolver;
         # preserve that authoritative projection in every downstream evidence surface.
-        person_evidence["candidates"] = r.candidates
+        person_evidence["candidates"] = _person_candidates_with_review_scope(
+            db, person_resolution.candidates
+        )
+    person_unit_consistency = {
+        "status": (
+            "CONFLICT"
+            if person_unit_conflict
+            else "MATCHED"
+            if has_asserted_unit
+            and person_resolution is not None
+            and person_resolution.status == "MATCHED"
+            and r.status == "MATCHED"
+            else "UNVERIFIED"
+            if person_supplied and has_asserted_unit
+            else "NOT_APPLICABLE"
+        ),
+        "person_unit_id": person_resolution.canonical_unit_id if person_resolution else None,
+        "asserted_unit_id": r.unit_id if has_asserted_unit else None,
+    }
     # Preserve an explicitly labelled group from documents. Classification still
     # validates it against KNOWN_GROUPS and abstains for broad/invalid values such
     # as "BQP"; this is direct document evidence, not inference from unit membership.
@@ -272,6 +319,8 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
         confidence_inputs.append(ex.relation_confidence)
     if person_resolution is not None:
         confidence_inputs.append(person_resolution.decision_confidence)
+    if person_unit_conflict:
+        confidence_inputs.append(0.0)
     decision_conf = min(
         [x for x in confidence_inputs if x is not None],
         default=0.0,
@@ -307,6 +356,7 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
         "canonical_name": r.canonical_name,
         "former_units": ex.former_units,
         "person_resolution": person_evidence,
+        "person_unit_consistency": person_unit_consistency,
         "person_registry_version": person_resolution.registry_version if person_resolution else None,
         "subject_group_method": sg_method,
         "subject_group_confidence": sg_conf,
@@ -344,6 +394,7 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
         r.status != "MATCHED"
         or r.organization_type == "UNKNOWN"
         or (person_resolution is not None and person_resolution.status != "MATCHED")
+        or person_unit_conflict
         or extraction_quality_low
         or (not relationless_lookup and ex.relation_confidence < 0.7)
         or sg is None
@@ -396,6 +447,8 @@ def process_case(db: Session, case: Case, structured: dict | None = None):
         # not be hidden by a downstream generic AMBIGUOUS/NOT_FOUND label.
         if batch_warnings:
             reason = str(batch_warnings[0].get("code") or "BATCH_WARNING")
+        elif person_unit_conflict:
+            reason = "PERSON_UNIT_CONFLICT"
         elif person_resolution is not None and person_resolution.status != "MATCHED":
             reason = f"PERSON_{person_resolution.status}"
         elif r.status != "MATCHED":

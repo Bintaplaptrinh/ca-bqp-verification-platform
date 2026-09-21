@@ -24,6 +24,7 @@ from cabqp.shared.models import (
     Document,
     EligibilityAssessment,
     ExtractedRecord,
+    Person,
     PolicyRule,
     ReviewCase,
     Source,
@@ -32,7 +33,7 @@ from cabqp.shared.models import (
     UnitName,
     VerificationResult,
 )
-from cabqp.shared.normalization import normalize_text
+from cabqp.shared.normalization import ascii_key, normalize_text
 
 
 def db_session() -> Session:
@@ -94,6 +95,24 @@ def seed_policy(db: Session) -> PolicyRule:
     db.add(rule)
     db.flush()
     return rule
+
+
+def seed_person(db: Session, unit: Unit, *, name: str = "Nguyễn Văn A") -> Person:
+    person = Person(
+        id=f"person_{unit.id}",
+        full_name=name,
+        normalized_key=normalize_text(name),
+        ascii_key=ascii_key(name),
+        canonical_unit_id=unit.id,
+        employment_status="ACTIVE",
+        subject_group_hint="CAND",
+        qa_status="APPROVED",
+        source_kind="OFFICIAL",
+        active=True,
+    )
+    db.add(person)
+    db.flush()
+    return person
 
 
 def test_golden_clean_exact_code_and_canonical_name():
@@ -214,7 +233,8 @@ def test_golden_policy_required_fields_and_effective_date():
 def test_golden_e2e_case_result_evidence_policy_and_versions():
     """GOLDEN-E2E: request -> extraction -> resolution -> subject group -> policy -> final evidence."""
     db = db_session()
-    seed_unit(db, uid="u_e2e", name="Cục Cảnh sát giao thông", org="BCA", coverage="BCA_CENTRAL_PUBLIC")
+    unit = seed_unit(db, uid="u_e2e", name="Cục Cảnh sát giao thông", org="BCA", coverage="BCA_CENTRAL_PUBLIC")
+    seed_person(db, unit)
     seed_policy(db)
     structured = {
         "subject_name": "Nguyễn Văn A",
@@ -473,7 +493,8 @@ def test_golden_clean_trusted_unit_code_is_unit_evidence_not_a_missing_relation(
     the code for what it is, exactly as the bare-name lookup path already did.
     """
     db = db_session()
-    seed_unit(db, uid="u_c08", name="Cục Cảnh sát giao thông", org="BCA", code="C08")
+    unit = seed_unit(db, uid="u_c08", name="Cục Cảnh sát giao thông", org="BCA", code="C08")
+    seed_person(db, unit)
     seed_policy(db)
     structured = {
         "subject_name": "Nguyễn Văn A",

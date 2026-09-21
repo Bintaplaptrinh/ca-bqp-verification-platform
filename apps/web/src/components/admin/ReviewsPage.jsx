@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { CheckCircle2, HelpCircle, RefreshCw, Loader2, UserCheck, UserMinus, Users, ChevronDown, ChevronUp, ListChecks } from '../../icons/index.jsx';
+import { CheckCircle2, HelpCircle, RefreshCw, Loader2, UserCheck, UserMinus, Users, ChevronDown, ChevronUp, ListChecks, Search, Calendar } from '../../icons/index.jsx';
 import PageHeader, { PageContainer } from '../layout/PageHeader.jsx';
 import NotificationModal from '../NotificationModal.jsx';
+import { can } from '../../auth.ts';
+import { P } from '../../permissions.ts';
 
 const STATUS_TABS = [
   { value: 'OPEN', label: 'Đang mở' },
@@ -86,6 +88,10 @@ const REASON_LABELS = {
     title: 'Không xác định được ranh giới giữa các hồ sơ trong tài liệu',
     hint: 'Tài liệu có nhiều người nhưng không tách được rõ ràng.',
   },
+  USER_REQUESTED_RECONCILIATION: {
+    title: 'Người tra cứu yêu cầu đối soát',
+    hint: 'Kiểm tra lại thông tin hiện hành và tài liệu gốc trước khi ghi quyết định.',
+  },
 };
 
 // How extraction.py found a given field. Unmapped rules fall through to their raw
@@ -153,6 +159,10 @@ function Section({ title, children }) {
     </div>
   );
 }
+
+const firstPresent = (...values) => values.find(
+  (value) => value !== null && value !== undefined && value !== '',
+);
 
 // A confidence reported next to the gate it was measured against, so the reviewer
 // sees how far short the Case fell instead of only that it fell short.
@@ -391,11 +401,18 @@ function ReassignForm({ item, apiBaseUrl, isAdmin, currentUsername, onDone, onCo
 // Falls back to the raw reason code when a Case was flagged for a reason this
 // build has no wording for, rather than hiding it.
 function ReviewSummary({ item }) {
-  const subject = item.payload?.subject || {};
+  const subject = item.subject?.name || item.subject?.subject_code
+    ? item.subject
+    : (item.payload?.subject || {});
+  const currentResult = item.current_result || {};
   const facts = [
     subject.subject_code ? `Mã định danh: ${subject.subject_code}` : null,
     subject.birth_year ? `Năm sinh: ${subject.birth_year}` : null,
     subject.position ? `Chức vụ: ${subject.position}` : null,
+    currentResult.current_unit ? `Đơn vị hiện tại: ${currentResult.current_unit}` : null,
+    currentResult.resolution_status
+      ? `Kết quả hiện tại: ${RESULT_STATUS_LABELS[currentResult.resolution_status] || currentResult.resolution_status}`
+      : null,
   ].filter(Boolean);
   const reason = REASON_LABELS[item.reason];
 
@@ -423,10 +440,7 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
   const [full, setFull] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const payload = item.payload || {};
-  const candidates = Array.isArray(payload.top_candidates) ? payload.top_candidates : [];
-
-  const loadFull = async () => {
+  const loadFull = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -437,19 +451,90 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiBaseUrl, item.case_id]);
 
-  const subject = payload.subject || {};
-  const resolution = payload.resolution || {};
-  const confidence = payload.confidence || {};
+  useEffect(() => {
+    loadFull();
+  }, [loadFull]);
+
+  const payload = item.payload || {};
+  const fullResult = full?.result || {};
+  const fullExtracted = full?.extracted || {};
+  const fullEvidence = fullResult.evidence || {};
+  const extractedFields = fullExtracted.extracted_fields || {};
+  const structuredFields = extractedFields.structured || {};
+  const payloadSubject = payload.subject || {};
+  const currentSubject = full?.subject || item.subject || {};
+  const subject = {
+    name: firstPresent(currentSubject.name, payloadSubject.name),
+    subject_code: firstPresent(currentSubject.code, currentSubject.subject_code, payloadSubject.subject_code),
+    birth_year: firstPresent(currentSubject.birth_year, extractedFields.birth_year, payloadSubject.birth_year),
+    position: firstPresent(currentSubject.position, payloadSubject.position),
+  };
+  const payloadResolution = payload.resolution || {};
+  const resolution = {
+    status: firstPresent(full?.resolution_status, fullResult.resolution_status, payloadResolution.status),
+    organization_type: firstPresent(full?.organization_type, fullResult.organization_type, payloadResolution.organization_type),
+    unit_id: firstPresent(fullResult.unit_id, payloadResolution.unit_id),
+    canonical_name: firstPresent(full?.current_unit, fullEvidence.canonical_name, payloadResolution.canonical_name),
+    match_method: firstPresent(fullResult.match_method, payloadResolution.match_method),
+    score: firstPresent(fullResult.score, payloadResolution.score),
+    margin: firstPresent(fullResult.margin, payloadResolution.margin),
+    registry_version: firstPresent(fullResult.registry_version, payloadResolution.registry_version),
+  };
+  const payloadConfidence = payload.confidence || {};
+  const confidence = {
+    decision: firstPresent(fullResult.decision_confidence, payloadConfidence.decision),
+    resolution: firstPresent(fullEvidence.resolution_confidence, payloadConfidence.resolution),
+    extraction: firstPresent(fullExtracted.extraction_confidence, payloadConfidence.extraction),
+    relation: firstPresent(fullExtracted.relation_confidence, payloadConfidence.relation),
+    subject_group: firstPresent(fullEvidence.subject_group_confidence, payloadConfidence.subject_group),
+  };
   const thresholds = payload.thresholds || {};
-  const caseInfo = payload.case || {};
-  const parseQuality = payload.parse_quality || {};
-  const fieldConfidence = payload.field_confidence || {};
-  const fieldEvidence = payload.field_evidence || {};
-  const businessFields = payload.business_fields || {};
-  const personResolution = payload.person_resolution || null;
-  const formerUnits = Array.isArray(payload.former_units) ? payload.former_units : [];
+  const caseInfo = full?.case || payload.case || {};
+  const parseQuality = fullEvidence.parse_quality || payload.parse_quality || {};
+  const fieldConfidence = extractedFields.field_confidence || payload.field_confidence || {};
+  const fieldEvidence = extractedFields.field_evidence || payload.field_evidence || {};
+  const businessFields = structuredFields.business_fields || payload.business_fields || {};
+  const personResolution = full?.person || payload.person_resolution || null;
+  const latestFormerUnits = Array.isArray(fullExtracted.former_units) ? fullExtracted.former_units : [];
+  const formerUnits = latestFormerUnits.length > 0
+    ? latestFormerUnits
+    : (Array.isArray(payload.former_units) ? payload.former_units : []);
+  const latestCandidates = Array.isArray(fullResult.top_candidates) ? fullResult.top_candidates : [];
+  const candidates = latestCandidates.length > 0
+    ? latestCandidates
+    : (Array.isArray(payload.top_candidates) ? payload.top_candidates : []);
+  const policyAssessments = Array.isArray(full?.eligibility) && full.eligibility.length > 0
+    ? full.eligibility
+    : (Array.isArray(payload.policy_assessments) ? payload.policy_assessments : []);
+  const submittedUnit = full?.submitted_unit || {};
+  const currentUnitRaw = firstPresent(
+    fullExtracted.current_unit_raw,
+    submittedUnit.name,
+    extractedFields.current_unit,
+    extractedFields.unit_name,
+    structuredFields.unit_name,
+    structuredFields.current_unit,
+    payload.current_unit_raw,
+    payload.business_fields?.unit_name,
+    payload.business_fields?.current_unit,
+  );
+  const currentUnitCode = firstPresent(
+    submittedUnit.code,
+    fullExtracted.unit_code,
+    extractedFields.unit_code,
+    structuredFields.unit_code,
+    payload.current_unit_code,
+    payload.business_fields?.unit_code,
+  );
+  const parseMethod = firstPresent(fullEvidence.parse_method, payload.parse_method);
+  const parseConfidence = firstPresent(fullEvidence.parse_confidence, payload.parse_confidence);
+  const subjectGroup = firstPresent(full?.subject_group, fullResult.subject_group, payload.subject_group);
+  const subjectGroupMethod = firstPresent(fullEvidence.subject_group_method, payload.subject_group_method);
+  const asOfDate = firstPresent(fullEvidence.policy_as_of_date, structuredFields.as_of_date, payload.as_of_date);
+  const bulkSource = fullEvidence.bulk_source || payload.bulk_source;
+  const splitSource = fullEvidence.split_source || payload.split_source;
   // FAIL first: the metric that sent the Case here is the one being looked for.
   const qualityMetrics = Object.entries(parseQuality.metrics || {}).sort(
     ([, a], [, b]) => (a?.state === 'FAIL' ? 0 : 1) - (b?.state === 'FAIL' ? 0 : 1),
@@ -458,9 +543,16 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
 
   return (
     <div className="mt-3 pt-3 border-t border-slate-100 space-y-3.5 text-xs">
-      <p className="text-slate-400">
-        Dữ liệu dưới đây được lưu tại thời điểm hồ sơ được chuyển sang thẩm định.
-      </p>
+      {loading ? (
+        <div role="status" className="alert alert-soft text-sm">
+          <span className="loading loading-spinner loading-sm" />
+          Đang tải thông tin chi tiết của hồ sơ
+        </div>
+      ) : (
+        <p className="text-base-content/60">
+          Thông tin hiện hành của hồ sơ, có đối chiếu với dữ liệu lúc chuyển sang thẩm định.
+        </p>
+      )}
 
       <Section title="Thông tin đối tượng">
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
@@ -473,7 +565,8 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
 
       <Section title="Đơn vị ghi trên tài liệu">
         <div className="space-y-1">
-          <Field label="Đơn vị hiện tại" value={payload.current_unit_raw} />
+          <Field label="Đơn vị công tác đã nhập" value={currentUnitRaw} />
+          <Field label="Mã đơn vị đã nhập" value={currentUnitCode} />
           <Field label="Đơn vị từng công tác" value={formerUnits.length > 0 ? formerUnits.join(', ') : null} />
         </div>
       </Section>
@@ -488,15 +581,15 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
           <Field label="Điểm đối chiếu" value={num(resolution.score)} />
           <Field label="Khoảng cách với ứng viên kế tiếp" value={num(resolution.margin)} />
           <Field label="Phiên bản danh mục" value={resolution.registry_version} />
-          <Field label="Nhóm đối tượng" value={payload.subject_group} />
-          <Field label="Cách xác định nhóm" value={payload.subject_group_method} />
+          <Field label="Nhóm đối tượng" value={subjectGroup} />
+          <Field label="Cách xác định nhóm" value={subjectGroupMethod} />
         </div>
       </Section>
 
       <Section title="Độ tin cậy so với ngưỡng">
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
           <GatedConfidence label="Trích xuất thông tin" value={confidence.extraction} threshold={thresholds.extraction_min} />
-          <GatedConfidence label="Đọc tài liệu" value={payload.parse_confidence} threshold={thresholds.parse_min} />
+          <GatedConfidence label="Đọc tài liệu" value={parseConfidence} threshold={thresholds.parse_min} />
           <GatedConfidence label="Xác định đơn vị hiện tại" value={confidence.relation} threshold={0.7} />
           <Field label="Đối chiếu đơn vị" value={pct(confidence.resolution)} />
           <Field label="Nhóm đối tượng" value={pct(confidence.subject_group)} />
@@ -506,7 +599,7 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
 
       <Section title="Chất lượng đọc tài liệu">
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-          <Field label="Cách đọc" value={payload.parse_method} />
+          <Field label="Cách đọc" value={parseMethod} />
           <Field label="Kết quả kiểm tra chất lượng" value={parseQuality.gate_result} />
           <Field label="Phiên bản ngưỡng" value={parseQuality.threshold_version || thresholds.threshold_version} />
         </div>
@@ -567,6 +660,8 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
             <Field label="Cách đối chiếu" value={personResolution.match_method} />
             <Field label="Điểm đối chiếu" value={num(personResolution.score)} />
             <Field label="Phiên bản danh mục" value={personResolution.registry_version} />
+            <Field label="Đơn vị theo hồ sơ nhân sự" value={personResolution.canonical_unit_name} />
+            <Field label="Mã đơn vị theo hồ sơ nhân sự" value={personResolution.canonical_unit_id} />
           </div>
         </Section>
       )}
@@ -614,10 +709,10 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
         </Section>
       )}
 
-      {Array.isArray(payload.policy_assessments) && payload.policy_assessments.length > 0 && (
+      {policyAssessments.length > 0 && (
         <Section title="Đánh giá chính sách">
           <div className="border border-slate-200 rounded-md overflow-hidden">
-            {payload.policy_assessments.map((a, idx) => (
+            {policyAssessments.map((a, idx) => (
               <div key={idx} className="px-2.5 py-1.5 border-b border-slate-100 last:border-0 bg-white">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-medium">{a.policy_id}</span>
@@ -635,34 +730,21 @@ function ReviewDetailPanel({ item, apiBaseUrl }) {
           <Field label="Người tạo" value={caseInfo.created_by} />
           <Field label="Hình thức tiếp nhận" value={caseInfo.input_type} />
           <Field label="Thời điểm tiếp nhận" value={dateTime(caseInfo.created_at)} />
-          <Field label="Ngày hiệu lực xét" value={payload.as_of_date} />
-          {payload.bulk_source && <Field label="Nguồn nhập theo lô" value={JSON.stringify(payload.bulk_source)} />}
-          {payload.split_source && <Field label="Tách từ tài liệu nhiều người" value={JSON.stringify(payload.split_source)} />}
+          <Field label="Ngày hiệu lực xét" value={asOfDate} />
+          {bulkSource && <Field label="Nguồn nhập theo lô" value={JSON.stringify(bulkSource)} />}
+          {splitSource && <Field label="Tách từ tài liệu nhiều người" value={JSON.stringify(splitSource)} />}
         </div>
       </Section>
 
-      {!full && (
+      {!full && !loading && (
         <button
           onClick={loadFull}
-          disabled={loading}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50"
+          className="btn btn-sm"
         >
-          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-          Xem thông tin hồ sơ mới nhất
+          Tải lại thông tin hồ sơ
         </button>
       )}
       <NotificationModal open={Boolean(error)} title="Không thể tải hồ sơ" message={error} onClose={() => setError(null)} />
-      {full && (
-        <div className="border border-red-200 bg-red-50/40 rounded-md p-2.5 space-y-1.5">
-          <p className="font-semibold text-red-800">Thông tin mới nhất, có thể khác dữ liệu ban đầu nếu hồ sơ đã được xử lý lại</p>
-          <div className="grid grid-cols-2 gap-2 text-slate-700">
-            <Field label="Kết quả" value={RESULT_STATUS_LABELS[full.resolution_status] || full.resolution_status} />
-            <Field label="Tổ chức" value={full.organization_type} />
-            <Field label="Đơn vị hiện tại" value={full.current_unit} />
-            <Field label="Trạng thái hồ sơ" value={RESULT_STATUS_LABELS[full.case?.workflow_status] || full.case?.workflow_status} />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -679,18 +761,32 @@ export function ReviewsPage({ apiBaseUrl, user }) {
   const [openId, setOpenId] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [conflictBanner, setConflictBanner] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [dateFromInput, setDateFromInput] = useState('');
+  const [dateToInput, setDateToInput] = useState('');
+  const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '' });
 
   // Renders the admin-only reassign form. The server enforces the same rule
   // independently in POST /reviews/{id}/assign, which refuses a coverage-group
   // change or a third-party assignment from a non-administrator.
   const isAdmin = !!user?.isAdmin;
   const currentUsername = user?.username;
+  const canDecide = can(user, P.REVIEW_DECIDE);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await axios.get(`${apiBaseUrl}/api/v1/reviews`, { params: { status, page, page_size: PAGE_SIZE } });
+      const res = await axios.get(`${apiBaseUrl}/api/v1/reviews`, {
+        params: {
+          status,
+          page,
+          page_size: PAGE_SIZE,
+          search: filters.search || undefined,
+          date_from: filters.dateFrom || undefined,
+          date_to: filters.dateTo || undefined,
+        },
+      });
       setItems(res.data?.items || []);
       setTotal(res.data?.total || 0);
     } catch (e) {
@@ -698,7 +794,7 @@ export function ReviewsPage({ apiBaseUrl, user }) {
     } finally {
       setLoading(false);
     }
-  }, [apiBaseUrl, status, page]);
+  }, [apiBaseUrl, status, page, filters]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [status]);
@@ -708,6 +804,24 @@ export function ReviewsPage({ apiBaseUrl, user }) {
   const handleConflict = () => {
     setConflictBanner(true);
     load();
+  };
+
+  const applyFilters = (event) => {
+    event.preventDefault();
+    setPage(1);
+    setFilters({
+      search: searchInput.trim(),
+      dateFrom: dateFromInput,
+      dateTo: dateToInput,
+    });
+  };
+
+  const clearFilters = () => {
+    setSearchInput('');
+    setDateFromInput('');
+    setDateToInput('');
+    setPage(1);
+    setFilters({ search: '', dateFrom: '', dateTo: '' });
   };
 
   return (
@@ -747,6 +861,49 @@ export function ReviewsPage({ apiBaseUrl, user }) {
           ))}
         </div>
 
+        <form onSubmit={applyFilters} className="card card-border card-sm mb-4 bg-base-100">
+          <div className="card-body gap-3">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(260px,1fr)_180px_180px_auto] lg:items-end">
+              <fieldset className="fieldset">
+                <legend className="fieldset-legend">Tên hoặc mã hồ sơ</legend>
+                <label className="input input-sm w-full">
+                  <Search className="h-4 w-4 text-base-content/50" />
+                  <input
+                    type="search"
+                    value={searchInput}
+                    onChange={(event) => setSearchInput(event.target.value)}
+                    placeholder="Nhập họ tên hoặc mã hồ sơ"
+                  />
+                </label>
+              </fieldset>
+              <fieldset className="fieldset">
+                <legend className="fieldset-legend">Từ ngày</legend>
+                <label className="input input-sm w-full">
+                  <Calendar className="h-4 w-4 text-base-content/50" />
+                  <input type="date" value={dateFromInput} onChange={(event) => setDateFromInput(event.target.value)} />
+                </label>
+              </fieldset>
+              <fieldset className="fieldset">
+                <legend className="fieldset-legend">Đến ngày</legend>
+                <label className="input input-sm w-full">
+                  <Calendar className="h-4 w-4 text-base-content/50" />
+                  <input type="date" value={dateToInput} onChange={(event) => setDateToInput(event.target.value)} />
+                </label>
+              </fieldset>
+              <div className="card-actions flex-nowrap pb-1">
+                <button type="submit" className="btn btn-primary btn-sm">Lọc</button>
+                <button type="button" onClick={clearFilters} className="btn btn-ghost btn-sm">Xóa lọc</button>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        {!canDecide && (
+          <div role="alert" className="alert alert-info alert-soft mb-4 text-sm">
+            Bạn có quyền xem hàng đợi. Các thao tác nhận việc và ghi quyết định cần quyền phê duyệt đối soát.
+          </div>
+        )}
+
         <NotificationModal open={Boolean(error)} title="Không thể tải hàng đợi" message={error} onClose={() => setError(null)} />
 
         {loading ? (
@@ -766,8 +923,9 @@ export function ReviewsPage({ apiBaseUrl, user }) {
                   <div className="min-w-0">
                     <ReviewSummary item={item} />
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-[11.5px] text-slate-500">
-                      <span>Hồ sơ #{String(item.case_id ?? '').replace(/^case_/i, '').slice(0, 8).toUpperCase()}</span>
-                      <span>Tiếp nhận: {dateTime(item.created_at) || 'Không rõ'}</span>
+                      <span>Hồ sơ #{item.case_code || String(item.case_id ?? '').replace(/^case_/i, '').slice(0, 8).toUpperCase()}</span>
+                      <span>Tiếp nhận hồ sơ: {dateTime(item.case_created_at) || 'Không rõ'}</span>
+                      <span>Gửi thẩm định: {dateTime(item.created_at) || 'Không rõ'}</span>
                       {item.coverage_group && <span>Phạm vi: {item.coverage_group}</span>}
                       <span>{item.assigned_to ? `Đang xử lý: ${item.assigned_to}` : 'Chưa có người nhận'}</span>
                     </div>
@@ -783,7 +941,7 @@ export function ReviewsPage({ apiBaseUrl, user }) {
                         </div>
                       </div>
                     )}
-                    {status === 'OPEN' && (
+                    {status === 'OPEN' && canDecide && (isAdmin || !item.assigned_to || item.assigned_to === currentUsername) && (
                       <ReassignForm
                         item={item}
                         apiBaseUrl={apiBaseUrl}
@@ -802,7 +960,7 @@ export function ReviewsPage({ apiBaseUrl, user }) {
                       {detailId === item.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       Chi tiết
                     </button>
-                    {status === 'OPEN' && (
+                    {status === 'OPEN' && canDecide && (isAdmin || !item.assigned_to || item.assigned_to === currentUsername) && (
                       <button
                         onClick={() => setOpenId(openId === item.id ? null : item.id)}
                         className="text-xs font-semibold text-red-600 hover:text-red-700"
@@ -813,7 +971,7 @@ export function ReviewsPage({ apiBaseUrl, user }) {
                   </div>
                 </div>
                 {detailId === item.id && <ReviewDetailPanel item={item} apiBaseUrl={apiBaseUrl} />}
-                {openId === item.id && (
+                {openId === item.id && canDecide && (isAdmin || !item.assigned_to || item.assigned_to === currentUsername) && (
                   <DecisionForm
                     item={item}
                     apiBaseUrl={apiBaseUrl}

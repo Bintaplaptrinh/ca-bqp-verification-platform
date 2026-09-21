@@ -102,25 +102,23 @@ def test_totals_split_by_the_same_rule_the_history_view_renders(db):
     )
 
 
-def test_a_case_awaiting_review_is_counted_as_review_whatever_its_label(db):
-    """The gap that put every NOT_FOUND -> NEED_REVIEW case under "chưa có kết luận".
-
-    Only AMBIGUOUS/CONFLICT used to reach need_review, so a Case the pipeline had
-    abstained on for any other reason — a failed parse gate, a low-confidence
-    extraction, NOT_FOUND — was reported as having produced no conclusion while a
-    reviewer still owned it. workflow_status is the authority on that.
-    """
+def test_unit_conclusion_outranks_review_of_other_dossier_facts(db):
+    """History tiles describe unit membership, while review may concern other facts."""
     _case(db, organization_type="UNKNOWN", resolution_status="NOT_FOUND", workflow_status="NEED_REVIEW")
     _case(db, organization_type="BCA", resolution_status="MATCHED", workflow_status="NEED_REVIEW")
     _case(db, organization_type="OTHER", resolution_status="MATCHED", workflow_status="NEED_REVIEW")
 
-    totals = _list(db, admin_principal("admin"))["totals"]
-    assert totals["need_review"] == 3
-    # An open review outranks the resolver's own label: none of these is reported
-    # as decided while a human still has to decide it.
-    assert totals["verified"] == 0
-    assert totals["out_of_scope"] == 0
+    body = _list(db, admin_principal("admin"))
+    totals = body["totals"]
+    assert totals["need_review"] == 1
+    assert totals["verified"] == 1
+    assert totals["out_of_scope"] == 1
     assert totals["no_conclusion"] == 0
+    assert {item["status_category"] for item in body["items"]} == {
+        "NEED_REVIEW",
+        "VERIFIED",
+        "OUT_OF_SCOPE",
+    }
 
 
 def test_totals_respect_the_callers_scope(db):

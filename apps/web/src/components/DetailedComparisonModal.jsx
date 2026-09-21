@@ -10,7 +10,7 @@ const ORG_LABELS = {
 
 const STATUS_LABELS = {
   MATCHED: 'Đã xác định',
-  AMBIGUOUS: 'Cần xác minh thêm',
+  AMBIGUOUS: 'Chưa đủ căn cứ',
   NOT_FOUND: 'Không tìm thấy',
   CONFLICT: 'Thông tin mâu thuẫn',
   UNKNOWN: 'Chưa xác định',
@@ -19,8 +19,13 @@ const STATUS_LABELS = {
 const MATCH_METHOD_LABELS = {
   EXACT_CODE: 'Khớp chính xác theo mã',
   EXACT_NAME: 'Khớp chính xác theo tên',
-  FUZZY_NAME: 'Khớp gần đúng theo tên',
-  BM25: 'Khớp theo nội dung',
+  CANONICAL_EXACT: 'Khớp chính xác theo tên chuẩn',
+  APPROVED_ALIAS: 'Khớp theo tên gọi đã phê duyệt',
+  ASCII_FOLDED: 'Khớp tên không dấu',
+  ASCII_FOLDED_ALIAS: 'Khớp tên gọi không dấu',
+  TRUSTED_CODE: 'Khớp theo mã đơn vị',
+  HYBRID_FUZZY_BM25_SEMANTIC: 'Đối chiếu tổng hợp',
+  TOP_RANKED_HIGH_CONFIDENCE: 'Kết quả phù hợp nhất',
 };
 
 const POLICY_STATUS_LABELS = {
@@ -30,20 +35,6 @@ const POLICY_STATUS_LABELS = {
   UNKNOWN: 'Chưa xác định',
 };
 
-// The case API expresses matching score and candidate margin on a 0–100 scale.
-// Decision confidence is the exception: it is a probability on a 0–1 scale.
-// Keep the conversions separate so a score such as 98.5 is not rendered as
-// 9,850% while a confidence such as 0.985 is still rendered as 99%.
-function formatPercentage(value) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return 'Chưa có';
-  return `${Math.round(value)}%`;
-}
-
-function formatProbability(value) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return 'Chưa có';
-  return `${Math.round(value * 100)}%`;
-}
-
 export default function DetailedComparisonModal({ isOpen, onClose, caseDetail }) {
   if (!isOpen) return null;
 
@@ -52,178 +43,154 @@ export default function DetailedComparisonModal({ isOpen, onClose, caseDetail })
   const result = detail.result || {};
   const eligibility = Array.isArray(detail.eligibility) ? detail.eligibility : [];
   const topCandidates = Array.isArray(result.top_candidates) ? result.top_candidates : [];
+  const preferredCandidate = topCandidates[0] || null;
   const orgType = detail.organization_type || 'UNKNOWN';
   const isMatched = detail.resolution_status === 'MATCHED';
+  const inScope =
+    typeof detail.in_scope === 'boolean'
+      ? detail.in_scope
+      : isMatched && ['BCA', 'BQP'].includes(orgType)
+        ? true
+        : isMatched && orgType === 'OTHER'
+          ? false
+          : null;
+  const conclusion =
+    inScope === true
+      ? `Đơn vị thuộc ${ORG_LABELS[orgType] || 'phạm vi BCA/BQP'}`
+      : inScope === false
+        ? 'Đơn vị không thuộc Bộ Quốc phòng hay Bộ Công an'
+        : 'Chưa có kết luận';
   const caseId = detail.case?.id || '';
-  const caseCode = caseId ? `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}` : 'Chưa có';
+  const caseCode = caseId
+    ? `#HS-2026-${String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase()}`
+    : 'Chưa có';
 
   const comparisonRows = [
     { field: 'Họ và tên', value: subject.name || 'Chưa cung cấp' },
     { field: 'Chức vụ', value: subject.position || 'Chưa cung cấp' },
     { field: 'Mã định danh', value: subject.code || 'Chưa cung cấp' },
-    { field: 'Đơn vị hiện tại (chuẩn hóa)', value: detail.current_unit || 'Chưa xác định' },
-    { field: 'Tổ chức', value: ORG_LABELS[orgType] || ORG_LABELS.UNKNOWN },
-    { field: 'Trạng thái đối chiếu', value: STATUS_LABELS[detail.resolution_status] || 'Chưa xác định' },
+    { field: 'Đơn vị hiện tại', value: detail.current_unit || 'Chưa xác định' },
+    { field: 'Cơ quan quản lý', value: ORG_LABELS[orgType] || ORG_LABELS.UNKNOWN },
+    { field: 'Trạng thái', value: STATUS_LABELS[detail.resolution_status] || 'Chưa xác định' },
     { field: 'Cách đối chiếu', value: MATCH_METHOD_LABELS[result.match_method] || 'Đối chiếu tự động' },
     { field: 'Nhóm đối tượng', value: detail.subject_group || 'Chưa xác định' },
   ];
 
+  const preferredName =
+    preferredCandidate?.full_name ||
+    preferredCandidate?.canonical_name ||
+    preferredCandidate?.canonical_unit_name ||
+    null;
+  const preferredOrg = preferredCandidate?.organization_type || 'UNKNOWN';
+  const preferredUnitId = preferredCandidate?.unit_id || preferredCandidate?.canonical_unit_id || null;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
-      <div className="relative w-full max-w-5xl bg-white rounded-md shadow-2xl border border-slate-200 overflow-hidden my-4 sm:my-6 max-h-[94vh] flex flex-col">
-        {/* Header */}
-        <div className="px-4 sm:px-6 py-3.5 sm:py-4 bg-white text-slate-900 flex items-center justify-between border-b border-slate-200 flex-shrink-0">
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-            <div className="min-w-0">
-              <h3 className="text-[15px] sm:text-[17px] font-bold tracking-tight text-slate-900 truncate">
-                ĐỐI CHIẾU CHI TIẾT
-              </h3>
-              <p className="text-[11.5px] sm:text-[12.5px] text-slate-500 mt-0.5 truncate">
-                Mã hồ sơ: <span className="font-mono text-emerald-700 font-bold">{caseCode}</span>, <span className="text-slate-900 font-bold">{subject.name || 'Chưa cung cấp'}</span>
+    <div className="modal modal-open" role="dialog" aria-modal="true" aria-labelledby="comparison-modal-title">
+      <div className="modal-box flex max-h-[94vh] w-11/12 max-w-5xl flex-col overflow-hidden bg-white p-0 text-black">
+        <header className="flex shrink-0 items-center justify-between border-b border-base-300 px-5 py-4">
+          <div className="min-w-0">
+            <h3 id="comparison-modal-title" className="truncate text-lg font-bold">
+              Thông tin chi tiết
+            </h3>
+            <p className="mt-0.5 truncate text-sm text-base-content/60">
+              Mã hồ sơ: <span className="font-mono font-semibold">{caseCode}</span>
+              {subject.name ? ` · ${subject.name}` : ''}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="btn btn-circle btn-ghost btn-sm" aria-label="Đóng">
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+
+        <div className="flex-1 space-y-5 overflow-y-auto p-5">
+          <div
+            role="alert"
+            className="alert border border-base-300 bg-white text-black"
+          >
+            <div>
+              <p className={`text-2xl font-bold ${inScope === true ? 'text-success' : inScope === false ? 'text-error' : 'text-warning'}`}>
+                {conclusion}
               </p>
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-900 flex items-center justify-center transition-colors flex-shrink-0 ml-2"
-            title="Đóng cửa sổ"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Top Metric Cards — real values only */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4 p-3.5 sm:p-6 bg-slate-50 border-b border-slate-200 text-[13px] flex-shrink-0">
-          <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
-            <span className="text-slate-500 text-[12px] block">Mức độ phù hợp</span>
-            <span className="text-[20px] font-bold text-emerald-600 block mt-0.5">{formatPercentage(result.score)}</span>
-            <span className="text-[11px] text-slate-400">{MATCH_METHOD_LABELS[result.match_method] || 'Đối chiếu tự động'}</span>
-          </div>
-
-          <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
-            <span className="text-slate-500 text-[12px] block">Độ tin cậy quyết định</span>
-            <span className="text-[20px] font-bold text-red-600 block mt-0.5">{formatProbability(result.decision_confidence)}</span>
-            <span className="text-[11px] text-slate-400">Phiên bản danh mục: {result.registry_version || 'Chưa có'}</span>
-          </div>
-
-          <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
-            <span className="text-slate-500 text-[12px] block">Chênh lệch kết quả</span>
-            <span className="text-[20px] font-bold text-slate-900 block mt-0.5">{formatPercentage(result.margin)}</span>
-            <span className="text-[11px] text-slate-400">Khoảng cách với ứng viên thứ 2</span>
-          </div>
-
-          <div className="bg-white p-3.5 rounded-md border border-slate-200 shadow-xs">
-            <span className="text-slate-500 text-[12px] block">Trạng thái đối chiếu</span>
-            <span className={`text-[15px] font-bold block mt-1 ${isMatched ? 'text-emerald-700' : 'text-amber-700'}`}>
-              {STATUS_LABELS[detail.resolution_status] || 'Chưa xác định'}
-            </span>
-            <span className="text-[11px] text-slate-400">Phiên bản bộ tiêu chí: {result.taxonomy_version || 'Chưa có'}</span>
-          </div>
-        </div>
-
-        {/* Modal Body */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-6">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-[15px] font-bold text-slate-900 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-red-600" />
-                Thông tin hồ sơ (dữ liệu thật từ hệ thống)
+          <section className="card card-border bg-base-100">
+            <div className="card-body">
+              <h4 className="card-title text-base">
+                <FileText className="h-4 w-4" />
+                Thông tin hồ sơ
               </h4>
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+                {comparisonRows.map((row) => (
+                  <div key={row.field} className="border-b border-base-200 pb-3">
+                    <dt className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+                      {row.field}
+                    </dt>
+                    <dd className="mt-1 font-semibold text-base-content">{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
+          </section>
 
-            <div className="overflow-x-auto border border-slate-200 rounded-md shadow-xs">
-              <table className="w-full text-left text-[13px] border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[12.5px]">
-                    <th className="py-3 px-4 w-56">Trường</th>
-                    <th className="py-3 px-4">Giá trị</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {comparisonRows.map((row, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-4 font-bold text-slate-900 bg-slate-50/50">{row.field}</td>
-                      <td className="py-3 px-4 font-semibold text-slate-900">{row.value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {topCandidates.length > 0 && (
-            <div>
-              <h4 className="text-[15px] font-bold text-slate-900 mb-3">Các kết quả có khả năng phù hợp</h4>
-              <div className="overflow-x-auto border border-slate-200 rounded-md shadow-xs">
-                <table className="w-full text-left text-[13px] border-collapse">
-                  <thead>
-                    <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[12.5px]">
-                      <th className="py-2.5 px-4">Tên/Đơn vị</th>
-                      <th className="py-2.5 px-4">Tổ chức</th>
-                      <th className="py-2.5 px-4 text-right">Điểm</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {topCandidates.map((c, idx) => (
-                      <tr key={idx}>
-                        <td className="py-2.5 px-4">{c.full_name || c.canonical_name || c.canonical_unit_name || 'Chưa có'}</td>
-                        <td className="py-2.5 px-4">{c.organization_type || 'Chưa có'}</td>
-                        <td className="py-2.5 px-4 text-right font-mono">{typeof c.score === 'number' ? `${Math.round(c.score)}%` : (c.score ?? 'Chưa có')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {preferredCandidate && (
+            <details className="collapse collapse-arrow border border-base-300 bg-base-100">
+              <summary className="collapse-title font-semibold">Thông tin đối chiếu bổ sung</summary>
+              <div className="collapse-content">
+                <p className="mb-3 text-sm text-base-content/70">
+                  {isMatched
+                    ? 'Hệ thống sử dụng kết quả phù hợp nhất để đưa ra kết luận; không yêu cầu cán bộ chọn lại giữa các ứng viên.'
+                    : 'Kết quả gần nhất được giữ làm căn cứ tham khảo; dữ liệu hiện có chưa đủ để kết luận.'}
+                </p>
+                <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt className="text-base-content/60">{isMatched ? 'Kết quả được ưu tiên' : 'Kết quả gần nhất'}</dt>
+                    <dd className="font-semibold">{preferredName || 'Chưa có'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-base-content/60">Cơ quan quản lý</dt>
+                    <dd className="font-semibold">{ORG_LABELS[preferredOrg] || ORG_LABELS.UNKNOWN}</dd>
+                  </div>
+                  {preferredUnitId && (
+                    <div>
+                      <dt className="text-base-content/60">Mã đơn vị</dt>
+                      <dd className="font-mono font-semibold">{preferredUnitId}</dd>
+                    </div>
+                  )}
+                </dl>
               </div>
-            </div>
+            </details>
           )}
 
           {eligibility.length > 0 && (
-            <div>
-              <h4 className="text-[15px] font-bold text-slate-900 mb-3">Đánh giá chế độ, chính sách</h4>
-              <div className="overflow-x-auto border border-slate-200 rounded-md shadow-xs">
-                <table className="w-full text-left text-[13px] border-collapse">
-                  <thead>
-                    <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[12.5px]">
-                      <th className="py-2.5 px-4">Quy định</th>
-                      <th className="py-2.5 px-4">Kết luận</th>
-                      <th className="py-2.5 px-4">Phiên bản</th>
-                      <th className="py-2.5 px-4">Lý do</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {eligibility.map((e, idx) => (
-                      <tr key={idx}>
-                        <td className="py-2.5 px-4 font-semibold">{e.policy_id}</td>
-                        <td className="py-2.5 px-4">{POLICY_STATUS_LABELS[e.status] || 'Chưa xác định'}</td>
-                        <td className="py-2.5 px-4 font-mono text-[12px]">{e.policy_version || 'Chưa có'}</td>
-                        <td className="py-2.5 px-4 text-slate-600">{e.reason || 'Chưa có'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <details className="collapse collapse-arrow border border-base-300 bg-base-100">
+              <summary className="collapse-title font-semibold">Đánh giá chế độ, chính sách</summary>
+              <div className="collapse-content space-y-3">
+                {eligibility.map((item, index) => (
+                  <div key={`${item.policy_id || 'policy'}-${index}`} className="rounded-box bg-base-200 p-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold">{item.policy_id || 'Quy định'}</span>
+                      <span className="badge badge-neutral badge-soft">
+                        {POLICY_STATUS_LABELS[item.status] || 'Chưa xác định'}
+                      </span>
+                    </div>
+                    {item.reason && <p className="mt-2 text-base-content/70">{item.reason}</p>}
+                  </div>
+                ))}
               </div>
-            </div>
+            </details>
           )}
         </div>
 
-        {/* Modal Footer Actions */}
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 flex-shrink-0">
-          <div className="text-[12px] text-slate-500">
-            Toàn bộ dữ liệu được lấy trực tiếp từ hồ sơ hệ thống. Quyết định nghiệp vụ được thực hiện tại hàng đợi thẩm định.
-          </div>
-
-          <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white text-[13px] font-semibold transition-colors shadow-xs cursor-pointer"
-            >
-              Đóng
-            </button>
-          </div>
-        </div>
+        <footer className="modal-action m-0 shrink-0 border-t border-base-300 px-5 py-4">
+          <button type="button" onClick={onClose} className="btn btn-primary">
+            Đóng
+          </button>
+        </footer>
       </div>
+      <button type="button" className="modal-backdrop" onClick={onClose} aria-label="Đóng cửa sổ">
+        close
+      </button>
     </div>
   );
 }

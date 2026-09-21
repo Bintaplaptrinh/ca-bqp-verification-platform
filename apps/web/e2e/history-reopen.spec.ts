@@ -43,5 +43,5 @@ test('reopening a case from history re-fetches real case detail, not a cached pl
   // The old hardcoded fallback would show 'Không đủ dữ liệu' unconditionally
   // for salary_status and never render any policy conclusion text — assert
   // the reopened view reaches the same real result state instead.
-  await expect(page.getByText('Đơn vị thuộc phạm vi quản lý')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Đơn vị thuộc Bộ (Công an|Quốc phòng)$/ })).toBeVisible();
 });

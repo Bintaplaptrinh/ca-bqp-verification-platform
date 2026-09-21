@@ -23,7 +23,8 @@ test('an ambiguous case can be self-assigned and decided from the review queue',
   expect(caseId, 'submitting the text query should return a case_id').toBeTruthy();
 
   await waitForResultState(page);
-  await expect(page.getByText('Có nhiều kết quả phù hợp')).toBeVisible();
+  await expect(page.getByText('Chưa có kết luận')).toBeVisible();
+  await expect(page.getByText('Thuộc Bộ Công an hoặc Bộ Quốc phòng?')).toHaveCount(0);
 
   const caseIdFragment = String(caseId).replace(/^case_/i, '').slice(0, 8).toUpperCase();
 
