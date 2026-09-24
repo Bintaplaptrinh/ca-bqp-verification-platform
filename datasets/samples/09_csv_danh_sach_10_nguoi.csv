@@ -1,0 +1,11 @@
+﻿stt,full_name,personal_code,birth_year,position,current_unit,subject_group,source_kind
+1,Đỗ Quang Huy,SYN-CAND-000009,1992,Chuyên viên,Bệnh viện 19-8,CAND,SYNTHETIC_DEMO
+2,Phan Thị Mai,SYN-QĐND-000010,1993,Kỹ sư,Cục Kỹ thuật,QĐND,SYNTHETIC_DEMO
+3,Nguyễn Đức Long,SYN-CAND-000011,1994,Bác sĩ,Học viện An ninh nhân dân,CAND,SYNTHETIC_DEMO
+4,Trần Khánh Linh,SYN-QĐND-000012,1995,Trợ lý,Bệnh viện Quân y 175,QĐND,SYNTHETIC_DEMO
+5,Lê Thanh Tùng,SYN-QĐND-000013,1996,Cán bộ,Cục Quân lực,QĐND,SYNTHETIC_DEMO
+6,Phạm Nhật Minh,SYN-QĐND-000014,1997,Nhân viên kỹ thuật,Trường Sĩ quan Thông tin,QĐND,SYNTHETIC_DEMO
+7,Vũ Thùy Dương,SYN-KHÁC-000015,1998,Giảng viên,Sở Y tế Thành phố Hồ Chí Minh,KHÁC,SYNTHETIC_DEMO
+8,Đinh Văn Nam,SYN-KHÁC-000016,1999,Điều dưỡng,Công ty TNHH Minh Phát,KHÁC,SYNTHETIC_DEMO
+9,Hồ Minh Châu,SYN-CAND-000017,2000,Chuyên viên,Bệnh viện 19-8,CAND,SYNTHETIC_DEMO
+10,Ngô Quốc Việt,SYN-QĐND-000018,2001,Kỹ sư,Cục Kỹ thuật,QĐND,SYNTHETIC_DEMO

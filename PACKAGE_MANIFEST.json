@@ -1,0 +1,1001 @@
+{
+  "package": "matdanh02-react-typescript-fe-be-final",
+  "generated_utc": "2026-09-14T09:58:36Z",
+  "scope": "React + TypeScript frontend migration; same-origin Nginx reverse proxy to FastAPI; Keycloak PKCE integration with split internal JWKS/public issuer; existing Router/OCR/Batch/business workflow retained",
+  "business_analysis": "docs/business/INPUT_INTAKE_BUSINESS_ANALYSIS_2026.md",
+  "frontend_architecture": "docs/architecture/FRONTEND_IMPLEMENTATION.md",
+  "local_validation": {
+    "backend_tests": "37 passed",
+    "python_compile": "PASS",
+    "frontend_legacy_static_runtime_removed": "PASS",
+    "frontend_typescript_source_check": "PASS (compiler + temporary ambient React types)",
+    "frontend_npm_typecheck_and_vite_build": "NOT_EXECUTED_LOCALLY (npm dependency install unavailable; enforced in CI/Docker)",
+    "json_yaml_parse": "PASS",
+    "resolver_calibration_reproducible": "PASS",
+    "release_local_validator": "PASS",
+    "docker_runtime": "NOT_EXECUTED_IN_THIS_ENVIRONMENT (Docker unavailable; enforced in CI/release)"
+  },
+  "file_count": 196,
+  "files": [
+    {
+      "path": ".editorconfig",
+      "size_bytes": 202,
+      "sha256": "942beb9a4bf6131ea124de396b1a753c28784b9830a01348a8939b396c0e7c3c"
+    },
+    {
+      "path": ".env.example",
+      "size_bytes": 2207,
+      "sha256": "f72d3b94062d5c52718d56837b7c2bf4635b267c56d4df80fbccd3ef89a26e03"
+    },
+    {
+      "path": ".github/pull_request_template.md",
+      "size_bytes": 383,
+      "sha256": "8cd6ffbd35eb254e29cc9ae629c5229522dab34a05ba7f5a945d2b7455193d08"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "size_bytes": 3559,
+      "sha256": "11e074b17b6d57bc1945dfe550bfc21d3286c5ab070b6ffc4f2452d77d3c5f1c"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "size_bytes": 1499,
+      "sha256": "c6887e1271b27ac8ec0a4217ed3077c761bf7d707102eeca515740cfa5b6ed47"
+    },
+    {
+      "path": ".gitignore",
+      "size_bytes": 117,
+      "sha256": "c06e6b7961430789ea97dfc340785c46f5280709799d7c10d657817c5e51092d"
+    },
+    {
+      "path": "CLAUDE.md",
+      "size_bytes": 4353,
+      "sha256": "ba7609a811ae68b078cb6bf091bd1f79d8aa88728ef0a96516ceff4467c99f32"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "size_bytes": 1105,
+      "sha256": "46744444cc0dccd19f7fe888f280c9a63261f546a1c8c82ed9d8923713700ae7"
+    },
+    {
+      "path": "Ke_hoach_E2E_CA_BQP_PRODUCTION_QUALITY_2026.md",
+      "size_bytes": 37127,
+      "sha256": "5f7a258944883ab01d24b8ce15ea4f9178537eacfbd6f6fa32f503ff043be079"
+    },
+    {
+      "path": "Makefile",
+      "size_bytes": 849,
+      "sha256": "dfdfe34555088cbd5172819b89c193fc545dc58651449af2e12f458449495de1"
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 6952,
+      "sha256": "17409e551014ef57fca6e865419d40b4e6e027c3bca08d94b9b88aa792c15513"
+    },
+    {
+      "path": "apps/backend/.dockerignore",
+      "size_bytes": 157,
+      "sha256": "47a95a7d6660513247ad906666c8cfc45214412493725a9ab85528a48d1fb184"
+    },
+    {
+      "path": "apps/backend/Dockerfile",
+      "size_bytes": 1600,
+      "sha256": "cd253c2f065e63afda9d350f669983d0650d23649713d4ed686e8cbe277ac143"
+    },
+    {
+      "path": "apps/backend/alembic.ini",
+      "size_bytes": 588,
+      "sha256": "3f94a1f0f25bb6bbc4c0ca9414e67cefbdc60cf63d087835da1d5f11cb4cdab4"
+    },
+    {
+      "path": "apps/backend/artifacts/resolver_calibration.json",
+      "size_bytes": 843,
+      "sha256": "841c8f6f75883437d24a3c2fcdf47eb7ac3d213f18fe48060eb4d4fd3e2100b6"
+    },
+    {
+      "path": "apps/backend/bootstrap/master_units_baseline43.csv",
+      "size_bytes": 17701,
+      "sha256": "bd8cb3fa3fa461493580d2f625dea5a1d950a5e1bca669510fa0ddef88f22b1c"
+    },
+    {
+      "path": "apps/backend/config/document_quality.yaml",
+      "size_bytes": 358,
+      "sha256": "2ce638eb2113cfbc23941b19121a4c22286d87c938d74f67de8a2fcaf1681f6e"
+    },
+    {
+      "path": "apps/backend/config/header_aliases.yaml",
+      "size_bytes": 764,
+      "sha256": "82205f9a44c8052d3ce4ed77dde422e7281281567955844dac14c83ab5744b8b"
+    },
+    {
+      "path": "apps/backend/migrations/env.py",
+      "size_bytes": 1411,
+      "sha256": "6fa67d8b62d1badf9d2fa28d8792a8e15d3574b122d457f799d01e3676c91846"
+    },
+    {
+      "path": "apps/backend/migrations/script.py.mako",
+      "size_bytes": 303,
+      "sha256": "09df2934ec2b75e655cff0f4af69b4af9416aa4945dfd116c63c42527e32bb90"
+    },
+    {
+      "path": "apps/backend/migrations/versions/0001_initial.py",
+      "size_bytes": 30334,
+      "sha256": "31b23ff5bf8a5bf399e569927d784217c54a91cf16a656ff00261f975f9fa2bd"
+    },
+    {
+      "path": "apps/backend/migrations/versions/0002_input_intelligence_bulk.py",
+      "size_bytes": 5237,
+      "sha256": "d2392c06e16b05681b4d1221669f13a16a14d7f7813699a41155ad49e18b481b"
+    },
+    {
+      "path": "apps/backend/pyproject.toml",
+      "size_bytes": 1682,
+      "sha256": "9d57aa03ec77f2823ae99d429aed28c686f9f27c64140983cc01f5459eb01722"
+    },
+    {
+      "path": "apps/backend/scripts/bake_models.py",
+      "size_bytes": 2013,
+      "sha256": "2ebfeeb23286e9d65f4c8feb97bdfc2b80bb0b89f26cb163c4abce43c4fbb81c"
+    },
+    {
+      "path": "apps/backend/scripts/seed.py",
+      "size_bytes": 6171,
+      "sha256": "bee989d786e27244de5101c431e5c7177f847ebea26daca0bb844b4fa5b8fdd2"
+    },
+    {
+      "path": "apps/backend/src/cabqp/__init__.py",
+      "size_bytes": 22,
+      "sha256": "91447944015cec709e8aa7655f7e9d64e1e4508e7023a57fe3746911c0fc6fed"
+    },
+    {
+      "path": "apps/backend/src/cabqp/api/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/api/admin_registry.py",
+      "size_bytes": 10225,
+      "sha256": "5e2d705229370289535f492ec6c3682982b0b493230f74f740ebebaa4097cbea"
+    },
+    {
+      "path": "apps/backend/src/cabqp/api/audit.py",
+      "size_bytes": 926,
+      "sha256": "056425d5f15c55d03999e82a6f5ae78f98ea9f5bbb6ed411996b3a55abfc064b"
+    },
+    {
+      "path": "apps/backend/src/cabqp/api/bulk.py",
+      "size_bytes": 5683,
+      "sha256": "1dd46639eb6238f06a76d476e7ccccd571d8e7e48391290f100dce39c387ceb5"
+    },
+    {
+      "path": "apps/backend/src/cabqp/api/cases.py",
+      "size_bytes": 11903,
+      "sha256": "31bff4e166b98fd11f0b048a5ce9f75d184734bdd55bb06f6687cd463a7dde48"
+    },
+    {
+      "path": "apps/backend/src/cabqp/api/health.py",
+      "size_bytes": 2032,
+      "sha256": "c2abddfe32249793fbc6a45e5092a35b95b9109d5460dae521cc7f36922b79b3"
+    },
+    {
+      "path": "apps/backend/src/cabqp/api/lookup.py",
+      "size_bytes": 601,
+      "sha256": "16748e84935b9c0070186cc5fdfc413e36151b10cf4ba39945e2bc43ea13da19"
+    },
+    {
+      "path": "apps/backend/src/cabqp/api/reviews.py",
+      "size_bytes": 3756,
+      "sha256": "efcc069d75147aceb0d8b5c20fd8dc81ae7ea540c8007835de61a4f5007d09ce"
+    },
+    {
+      "path": "apps/backend/src/cabqp/main.py",
+      "size_bytes": 1942,
+      "sha256": "487f53a3c186ffdeb6f6a897e5a8428a3102076229b878109e9df2092d028cf6"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/audit/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/audit/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/audit/service.py",
+      "size_bytes": 347,
+      "sha256": "52fce2c9efb2e0478e1838eb03c2ef16053c930d037bd5f2b1e63eb8ba250342"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/auth/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/auth/dependencies.py",
+      "size_bytes": 4756,
+      "sha256": "3b8e47443cfd1bfae6d843a4c0b46ae3cbd2e8c22c114193f5c6e9dda555125f"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/bulk/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/bulk/service.py",
+      "size_bytes": 14588,
+      "sha256": "15ce03895805cf0cae1711955c00ea212398ba195f2c3021672bc7a3d19ae999"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/cases/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/cases/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/cases/service.py",
+      "size_bytes": 11576,
+      "sha256": "ece2b1b3d868c0065e03c55074290be4694546ab990cd68df36c3af1757cbc35"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/decisioning/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/decisioning/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/decisioning/policy.py",
+      "size_bytes": 3160,
+      "sha256": "09ede3c7f47c9cdb2280a5415d27a7873afc9e51aea1382bf302efd452a8ae9a"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/antimalware.py",
+      "size_bytes": 2734,
+      "sha256": "522292a269bff05b4d43a5e31efec72838077b780d97c52396aa96818d088f63"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/extraction.py",
+      "size_bytes": 7668,
+      "sha256": "e11fbf6fb1b1fdcd05c87d12b084dadcf9da4b51b42d654820fdda32279077b4"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/file_validation.py",
+      "size_bytes": 4192,
+      "sha256": "537276da687627d7afe98836b71130a11a8a12ba62eb3609c08f391990179f26"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/ocr/__init__.py",
+      "size_bytes": 520,
+      "sha256": "f20e09fcade29abe0a7bd09cb358385908a7f3c129aff3f2f2d41df276a36f57"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/ocr/base.py",
+      "size_bytes": 679,
+      "sha256": "8c93e0a90ea072a275138c2d5ae8a1c86b685661fc8ea8e2f189136f239ae46f"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/ocr/engines.py",
+      "size_bytes": 8274,
+      "sha256": "9377d42dcaa72f13fa2fc29a9881b173195eab035496babb58e7cfc9b0cf9404"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/ocr/pipeline.py",
+      "size_bytes": 3138,
+      "sha256": "bafe81573fa571379178f3f950e242f22c4ab764b3de4960c7e9d0a90f44832e"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/ocr/preprocess.py",
+      "size_bytes": 3868,
+      "sha256": "034cd52c4dae21248afe30c539a67dcfc809ec8718fe62a3d3a5ccb0635b2594"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/parsers.py",
+      "size_bytes": 7862,
+      "sha256": "176723f7a6b048f78b642df13f0889a9b5087e968d2021ccee4415d52c7afe58"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/quality.py",
+      "size_bytes": 10469,
+      "sha256": "d3c75f15d25836e638978274d0326834bcf88e9a3e1e203a39790897145b6881"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/router.py",
+      "size_bytes": 7346,
+      "sha256": "0dc6251871bb87cfe105feabcebdbf1260216ff6db19a35cca82da4ad04b4cec"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/storage.py",
+      "size_bytes": 2328,
+      "sha256": "4d151401a47a2b1bc5fc13092f6d917e9b9508bb3be8c8a72e78534ff8b66139"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/document_intelligence/table.py",
+      "size_bytes": 4491,
+      "sha256": "efde3558212ff89a22f96b556b7039d1227d075e78565a1204dd52f838f8039a"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/registry/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/registry/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/registry/service.py",
+      "size_bytes": 20869,
+      "sha256": "af595c06e529bab545b39126dd5ca65aaf9c8eb4c3615db67e5f236a141eb65c"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/resolution/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/resolution/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/resolution/calibration.py",
+      "size_bytes": 2844,
+      "sha256": "620df364071ffb8d8ed1d9714d8e46d4a85f062ff9594968f47d97dcd602c68e"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/resolution/service.py",
+      "size_bytes": 20691,
+      "sha256": "312db4c08e5372ad983705ed47705372a7969169c5fd1e423a5e12094928c799"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/review/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/review/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/review/service.py",
+      "size_bytes": 9099,
+      "sha256": "146c5127e5e893afb749e3549121bb7beaff0c37f2633ad51115c7bf2cd8b45f"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/subject_group/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/modules/subject_group/service.py",
+      "size_bytes": 1769,
+      "sha256": "fc098248b6336604b1b5eab7e973f5834d8dff8ff4c3a6b80ea33240d7f3d47f"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/db.py",
+      "size_bytes": 483,
+      "sha256": "fdb43face2aa8028f9f68784bcb562afa580210ac793782c3581febe32fd5c65"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/enums.py",
+      "size_bytes": 1951,
+      "sha256": "118fb054b393c2a28c4d5523abcd451a92d43a4761d694e621895bf536c756d1"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/logging.py",
+      "size_bytes": 2326,
+      "sha256": "fdeab4ac18dc5b39e5cd6a822e35911d922c9251d943a655acc14b0ed2dd4ac6"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/metrics.py",
+      "size_bytes": 1711,
+      "sha256": "7fb341f027440de90de14259d77572176e67de85794f4a4ce9605db358bba4db"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/middleware.py",
+      "size_bytes": 5947,
+      "sha256": "8333707c780cbe41e85c075ef54f664405576095096786476483e03910540045"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/models.py",
+      "size_bytes": 26163,
+      "sha256": "47e426917d7636abad505482be683e15f05cc34589b4b3404d9d143673188e4d"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/normalization.py",
+      "size_bytes": 695,
+      "sha256": "2e5ee3e2bbdde317caec748c9bf6ade2862221918e5a0a49016c549985d83a9b"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/resilience.py",
+      "size_bytes": 2141,
+      "sha256": "f509b40032c92f04eba567cdfef5136d2ac1e1fb490b4e47199702d605b7c5d4"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/schemas.py",
+      "size_bytes": 5921,
+      "sha256": "76f14859139a9542fbe30e83af0eb0d1d1299d6dd1dce4bc587a8bbbc0069437"
+    },
+    {
+      "path": "apps/backend/src/cabqp/shared/settings.py",
+      "size_bytes": 5532,
+      "sha256": "adcbb94459b3bfdf7c4b7f24d17a5cae8d3c64b64a3277fa4648b31a80b3293b"
+    },
+    {
+      "path": "apps/backend/src/cabqp/workers/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "apps/backend/src/cabqp/workers/celery_app.py",
+      "size_bytes": 1224,
+      "sha256": "ab9be3b8aad5560fb7a3c3023072889ff8f129e14cf2903607cb1d6e08c94dba"
+    },
+    {
+      "path": "apps/backend/src/cabqp/workers/tasks.py",
+      "size_bytes": 14461,
+      "sha256": "dd6227c69a1ac8ccabdea7a8bb752dfd874e8cc07de7235f56beac6fec57ee7f"
+    },
+    {
+      "path": "apps/backend/tests/conftest.py",
+      "size_bytes": 280,
+      "sha256": "7e798fbb9541a5afecc8fbc4a5ee9820191e7bed886f9c73b51d587dcafcc41b"
+    },
+    {
+      "path": "apps/backend/tests/test_auth_issuer.py",
+      "size_bytes": 1741,
+      "sha256": "8bbf7219c175e565d29d5f6d42e19c8dee961f6373c403645fae5f01ee90daf0"
+    },
+    {
+      "path": "apps/backend/tests/test_business_workflow_regressions.py",
+      "size_bytes": 10676,
+      "sha256": "3cab2c8c8bbce0cc9a78e189050709b3ae521c097ebcefaf6995878c715481a6"
+    },
+    {
+      "path": "apps/backend/tests/test_extraction.py",
+      "size_bytes": 389,
+      "sha256": "336cbd605376e82949ef3f837d70e3953e27856a243524a3ec28b20ac9826a34"
+    },
+    {
+      "path": "apps/backend/tests/test_golden_suites.py",
+      "size_bytes": 10505,
+      "sha256": "d1255e7e88ed9c17c1a0cca91ea7f65638c7542851278ff20870bd2b96fa51d3"
+    },
+    {
+      "path": "apps/backend/tests/test_group1_regressions.py",
+      "size_bytes": 8057,
+      "sha256": "3514d7d6f7eacc5e384abce8d41c253535c0b5673a82972844b8c559ddb09269"
+    },
+    {
+      "path": "apps/backend/tests/test_health.py",
+      "size_bytes": 185,
+      "sha256": "b69eb9636f96a3b9f91e301b953f251f6c01249d036708dc7e4049dc2d051b35"
+    },
+    {
+      "path": "apps/backend/tests/test_input_intelligence_upgrade.py",
+      "size_bytes": 10939,
+      "sha256": "f5f95086bef6a35f6418a4434bf065e7ea9cc557fc8cd5d4b536a75944f6abad"
+    },
+    {
+      "path": "apps/backend/tests/test_subject_group.py",
+      "size_bytes": 283,
+      "sha256": "b3c7870363af12eb7f1485b734d50ee5e98ea51e73085a7baf350482026a728f"
+    },
+    {
+      "path": "apps/web/.dockerignore",
+      "size_bytes": 43,
+      "sha256": "9d306e9e08319594448d804e6b03d0468a336daff80786b1f09d696110680191"
+    },
+    {
+      "path": "apps/web/Dockerfile",
+      "size_bytes": 514,
+      "sha256": "6e51357179dba03e5b54f185b85e0196de7f8fab159d15cd96df328fa7d476b9"
+    },
+    {
+      "path": "apps/web/README.md",
+      "size_bytes": 790,
+      "sha256": "02caed15f8a555c5ab214e10c3283a5454f3d4d14eeba89d5c382944ab55da9c"
+    },
+    {
+      "path": "apps/web/index.html",
+      "size_bytes": 483,
+      "sha256": "6ad067dfdd86eb495652b962b0f2c8f47a0adeed43d47045d2ade3b67d3a1521"
+    },
+    {
+      "path": "apps/web/nginx.conf",
+      "size_bytes": 657,
+      "sha256": "9334b6eee18d2ff9c8faea24ddc093e427b54e21b5a92dc3f6e05f1786e073bd"
+    },
+    {
+      "path": "apps/web/package.json",
+      "size_bytes": 539,
+      "sha256": "2ae684d5e2d0efeb19cca210d9ec11f62efe9d2c81e2149403e9f44c4b446440"
+    },
+    {
+      "path": "apps/web/src/App.tsx",
+      "size_bytes": 6836,
+      "sha256": "a1a4adad8a047cbe237acbb9f28f2f979fcf1f7475109ee6e7b6a73e726f91c4"
+    },
+    {
+      "path": "apps/web/src/api.ts",
+      "size_bytes": 5722,
+      "sha256": "38ffec097b0f723ecf59e310edf18107fe910746050821a6631fe2092d4d35c5"
+    },
+    {
+      "path": "apps/web/src/auth.ts",
+      "size_bytes": 5079,
+      "sha256": "f3d1de0b96c9b989a448db304ad41286cd687b9d01c36d723379dce55fe7e5e1"
+    },
+    {
+      "path": "apps/web/src/components/Toast.tsx",
+      "size_bytes": 1051,
+      "sha256": "f438c4df4b21dd938aa6581dc42bdb1ad22a4b26d22f5e26c6ca2ce0b7b81caf"
+    },
+    {
+      "path": "apps/web/src/components/UI.tsx",
+      "size_bytes": 2464,
+      "sha256": "c50eda7ece6c535600e43a78bec6b313752b19fbd3a523ee304190ad93167129"
+    },
+    {
+      "path": "apps/web/src/config.ts",
+      "size_bytes": 381,
+      "sha256": "05fdb77e366d9f48e7cdd7528b090993601f3002bc9c9da7b1469ae5d75565e7"
+    },
+    {
+      "path": "apps/web/src/hooks.ts",
+      "size_bytes": 610,
+      "sha256": "44ed114b0f2c011703f1b694635ca0d12ee0d98e9c234c6c39085deede62a59c"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "size_bytes": 301,
+      "sha256": "1a55fb5459eb6b9fb1eed17fe4e2f99336fce573b54490e77e0b67bc70d6e9b7"
+    },
+    {
+      "path": "apps/web/src/pages/Admin.tsx",
+      "size_bytes": 13375,
+      "sha256": "9de5aa9cf7336cc3425d9347f8da4c43fd50a36b9e0e49426f7a53899017abda"
+    },
+    {
+      "path": "apps/web/src/pages/Cases.tsx",
+      "size_bytes": 13509,
+      "sha256": "269b976404146d1acafec4adc23e2d54b2a8d2219f9f33ce9af6cf2cff4d05e3"
+    },
+    {
+      "path": "apps/web/src/pages/Dashboard.tsx",
+      "size_bytes": 4880,
+      "sha256": "af5a277842538c4ca95271d64b6b3f3bf2b095a77328b53f8acc772c1077c183"
+    },
+    {
+      "path": "apps/web/src/pages/Lookup.tsx",
+      "size_bytes": 3144,
+      "sha256": "c6b77b7cdf7e2028665142fef74c6e74cf1de00f0b70556b2035274c3c10abbd"
+    },
+    {
+      "path": "apps/web/src/pages/Reviews.tsx",
+      "size_bytes": 3614,
+      "sha256": "162cdc90df9f9126e832306b682ad78b7a6be76739c950f899d79beb1c8377db"
+    },
+    {
+      "path": "apps/web/src/styles.css",
+      "size_bytes": 18821,
+      "sha256": "bf5251bddc23db7bfacf927aa8fa81406bdf75ff39ccd0d42263f5cfeee3dee8"
+    },
+    {
+      "path": "apps/web/src/types.ts",
+      "size_bytes": 3538,
+      "sha256": "227ab49010adcdc09ad0046be19186da16c2da253a7f2d5a2e37a0268387898b"
+    },
+    {
+      "path": "apps/web/src/vite-env.d.ts",
+      "size_bytes": 38,
+      "sha256": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5"
+    },
+    {
+      "path": "apps/web/tsconfig.app.json",
+      "size_bytes": 507,
+      "sha256": "a7266d1c85fa6947c70073256d9a73e4c459e97b0b4ef24b5c48dcab498ef4c5"
+    },
+    {
+      "path": "apps/web/tsconfig.json",
+      "size_bytes": 107,
+      "sha256": "e8d6f7b50828db3953e21c7e92584f9206b3cd2551b4012507372afbb7fe9ce3"
+    },
+    {
+      "path": "apps/web/tsconfig.node.json",
+      "size_bytes": 215,
+      "sha256": "eddc6153755794a096075b315d8399382f8c7aa4ffa61240fbfa1917bd46e6fe"
+    },
+    {
+      "path": "apps/web/vite.config.ts",
+      "size_bytes": 331,
+      "sha256": "f924c9a4cac47881d9f7c7edb799dbac0302871430515d696f817c7a1482848a"
+    },
+    {
+      "path": "compose.yaml",
+      "size_bytes": 5285,
+      "sha256": "1239e925277f6a016cb5c1cd1f334976bded1ea991c3ec84f725e610422a01a0"
+    },
+    {
+      "path": "config.yaml",
+      "size_bytes": 8604,
+      "sha256": "038990482179feef829868bde5273c35a3d442bcf2458f414d674bc987e2b05a"
+    },
+    {
+      "path": "contracts/api/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "contracts/data/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "datasets/curated/master_units_baseline43.csv",
+      "size_bytes": 17701,
+      "sha256": "bd8cb3fa3fa461493580d2f625dea5a1d950a5e1bca669510fa0ddef88f22b1c"
+    },
+    {
+      "path": "datasets/manifests/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "datasets/manifests/business_requirements.yaml",
+      "size_bytes": 417,
+      "sha256": "00cb7ef84f33669d54c0f75e52d608e4259276d4acbc088dafb9c6d6a25e9b6a"
+    },
+    {
+      "path": "datasets/manifests/coverage_status.json",
+      "size_bytes": 655,
+      "sha256": "9656b6b9741d9fcef9a9cec034562465a49e10c6237f95811175bb600d0c5891"
+    },
+    {
+      "path": "datasets/manifests/expected_rosters/bca_commune_police_3319.csv",
+      "size_bytes": 38,
+      "sha256": "033554b52543d5ffa96ba1d29b7db09964b390685c71c1e861a6099f205d9a14"
+    },
+    {
+      "path": "datasets/manifests/expected_rosters/bqp_border_guard_commands_30.csv",
+      "size_bytes": 38,
+      "sha256": "033554b52543d5ffa96ba1d29b7db09964b390685c71c1e861a6099f205d9a14"
+    },
+    {
+      "path": "datasets/manifests/expected_rosters/bqp_provincial_commands_34.csv",
+      "size_bytes": 38,
+      "sha256": "033554b52543d5ffa96ba1d29b7db09964b390685c71c1e861a6099f205d9a14"
+    },
+    {
+      "path": "datasets/manifests/registry_schema.json",
+      "size_bytes": 540,
+      "sha256": "71b5dfb3654a76a1cbdf3dd51bd0d694c97f22d921664d4aad78a69ffc5eab48"
+    },
+    {
+      "path": "datasets/manifests/synthetic_schema.json",
+      "size_bytes": 1120,
+      "sha256": "2088fc4db08f0c662ce7f751a18bc31fbc2d319025355f5dfa0bc709028ef38f"
+    },
+    {
+      "path": "datasets/samples/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "datasets/samples/README.md",
+      "size_bytes": 72,
+      "sha256": "27b45e35804234e5797f987759a8ab96a0c42abdf369a591a5ec7b994b42addd"
+    },
+    {
+      "path": "deploy/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "deploy/keycloak/cabqp-realm.json",
+      "size_bytes": 2881,
+      "sha256": "da6c091654f22cf823915cc82081a3f4da07c4ddeb55e5ab71dee3e90a1b2045"
+    },
+    {
+      "path": "docs/architecture/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/architecture/BACKEND_E2E_IMPLEMENTATION.md",
+      "size_bytes": 1278,
+      "sha256": "49d49986d21c3a62e382ffe4e40a9d449b8e4e0014a3d069cb8cb836659cd231"
+    },
+    {
+      "path": "docs/architecture/FRONTEND_IMPLEMENTATION.md",
+      "size_bytes": 3006,
+      "sha256": "99c307394abeeeb237dc7924106c6bc8586df8b1e63e518475282f9d281fa9a8"
+    },
+    {
+      "path": "docs/business/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/business/INPUT_INTAKE_BUSINESS_ANALYSIS_2026.md",
+      "size_bytes": 16648,
+      "sha256": "4aff16db910f27c4161d7e69bb5bd653893c956a4907c4045fd3b9fb47712fbd"
+    },
+    {
+      "path": "docs/business/Ke_hoach_E2E_CA_BQP_PRODUCTION_QUALITY_2026.pdf",
+      "size_bytes": 134969,
+      "sha256": "80ecb9714805c554fb17731886012cf143331d896dadf863afb9359da2eb7032"
+    },
+    {
+      "path": "docs/data/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/quality/LOCAL_VALIDATION.md",
+      "size_bytes": 656,
+      "sha256": "248bc30908d64072a0784a8e4b8a3e69950792a58bb285e8175a315dedaeaed3"
+    },
+    {
+      "path": "docs/quality/RELEASE_GATES.md",
+      "size_bytes": 660,
+      "sha256": "3aa65286fc6cd41d2c360f0795bc14a73cfd8b6d26d71f0eea60d672f127a99e"
+    },
+    {
+      "path": "docs/quality/VALIDATION_REPORT.md",
+      "size_bytes": 1709,
+      "sha256": "a6a99789ed88e8798b24215b1890fc5bf2de9ba7aac21ef3333d77de7c5f02bd"
+    },
+    {
+      "path": "infra/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ops/.gitkeep",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ops/prometheus/prometheus.yml",
+      "size_bytes": 184,
+      "sha256": "c8cfa34d9892e617e29045ac04500574fe763fad0c20179e5ea7f3e5c0ebd9dc"
+    },
+    {
+      "path": "ops/runbooks/BACKUP_RESTORE.md",
+      "size_bytes": 993,
+      "sha256": "f00b8bdb6a39834802c6c3420d656e1f8eb6fefd35fd49b47331be4fc7576876"
+    },
+    {
+      "path": "ops/runbooks/DEPLOY_ROLLBACK.md",
+      "size_bytes": 1069,
+      "sha256": "87c1cf766a23ec690480319bf0d65aa65ebd7c8712db1872bd1b8a550584bd94"
+    },
+    {
+      "path": "ops/runbooks/INCIDENT_RESPONSE.md",
+      "size_bytes": 810,
+      "sha256": "172f70c5d448dae1967bdfa082428ca91d7c028afadb510aa231e2c34dd168e8"
+    },
+    {
+      "path": "ops/runbooks/REGISTRY_POLICY_UPDATE.md",
+      "size_bytes": 640,
+      "sha256": "1cbd32ceac9783e719622bfa437b01bf99eba14e5bb34fe6320d026c291f3c50"
+    },
+    {
+      "path": "ops/scripts/backup_postgres.sh",
+      "size_bytes": 416,
+      "sha256": "cc0ba58bfdfba7b673640ef3ee1663902f7bed77cbe165283147fea83a253459"
+    },
+    {
+      "path": "ops/scripts/migration_rollback_drill.sh",
+      "size_bytes": 163,
+      "sha256": "9c5ca29d562beee911c6038bdd1cf6ee082d4d5bc09b716faad7914e8da78b35"
+    },
+    {
+      "path": "ops/scripts/restore_postgres.sh",
+      "size_bytes": 544,
+      "sha256": "2807998466ee17d51346dcba1201c3c572b235f4c8053270f8239aef04fbe2f2"
+    },
+    {
+      "path": "ops/scripts/validate_release.py",
+      "size_bytes": 2977,
+      "sha256": "147c757534856e50489794f9ffc97621ffd65c2c1ad3b2f3a668ebc692d1d3e0"
+    },
+    {
+      "path": "pipelines/README.md",
+      "size_bytes": 5017,
+      "sha256": "7bb405b6274f46b66bc5283046db70752fcde4bca1e49186bb2865b99ec1ca8f"
+    },
+    {
+      "path": "pipelines/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "pipelines/benchmarks/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "pipelines/benchmarks/common.py",
+      "size_bytes": 957,
+      "sha256": "540aed1ff19ef3515a02834ea757f9cbcf2fb140c8033ef75b84c17b39a7026c"
+    },
+    {
+      "path": "pipelines/benchmarks/extraction_f1.py",
+      "size_bytes": 2518,
+      "sha256": "8e95d3242f6d31d28bbd787ff9672987c7709ce7e2cb61aa66954bd7e96de6d7"
+    },
+    {
+      "path": "pipelines/benchmarks/ocr_accuracy.py",
+      "size_bytes": 3122,
+      "sha256": "7c6a4572e685706cb60b441051601e80e1ff6034848edb20381e5ce5d03d9718"
+    },
+    {
+      "path": "pipelines/benchmarks/parse_success.py",
+      "size_bytes": 1815,
+      "sha256": "9f742564139deae530d25388a345078e7ff815bbd150a28fb72f6f656500e0d9"
+    },
+    {
+      "path": "pipelines/ml/README.md",
+      "size_bytes": 92,
+      "sha256": "fdad394b63321121ab47a6dda41ddcdc22039421a2e2dd2a8f9293907de575f9"
+    },
+    {
+      "path": "pipelines/ml/calibrate_resolver.py",
+      "size_bytes": 5626,
+      "sha256": "a4af6cb27d1962601e5a3ddcacd4726d2fdedfb36207965e7743f178b556adf1"
+    },
+    {
+      "path": "pipelines/registry_ingestion/README.md",
+      "size_bytes": 76,
+      "sha256": "07b529a77933052488e1df59522121c0a1393b2f9f0c9dd6940a80ad81bd616b"
+    },
+    {
+      "path": "pipelines/registry_ingestion/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "pipelines/registry_ingestion/builder.py",
+      "size_bytes": 6786,
+      "sha256": "b237d6a63aea1cbbe773808577556945812f3e548b59ec689ea53e157e2bc365"
+    },
+    {
+      "path": "pipelines/registry_ingestion/coverage.py",
+      "size_bytes": 1766,
+      "sha256": "c9efd8aa347ae84e06bad0589c2d7275853998846d014d6881ab93201041b1e1"
+    },
+    {
+      "path": "pipelines/registry_ingestion/crawler.py",
+      "size_bytes": 8652,
+      "sha256": "a991dbf0f00a6cb7b003564771e164c7290f2ea9498f790dbe519334d3912785"
+    },
+    {
+      "path": "pipelines/registry_ingestion/dedupe_registry.py",
+      "size_bytes": 3526,
+      "sha256": "797a5bde7bc0c09bbf152c7ab153d35df14be7e8cac41ee4853ae65558abf1cc"
+    },
+    {
+      "path": "pipelines/registry_ingestion/extractors.py",
+      "size_bytes": 3435,
+      "sha256": "caef96e32091937ac6a0994cc7f8e26570b024283ee9128654d880cca9a8624e"
+    },
+    {
+      "path": "pipelines/registry_ingestion/normalize.py",
+      "size_bytes": 968,
+      "sha256": "166862f917c18287c8fab4f6f6cef9e4490656ac7a09bbf10f0be189655d30fb"
+    },
+    {
+      "path": "pipelines/registry_ingestion/registry.py",
+      "size_bytes": 1299,
+      "sha256": "5fe0280e7390addb4490f64fc92766166f847c5a7ef98892bc841f5ec7745cc8"
+    },
+    {
+      "path": "pipelines/registry_ingestion/registry_diff.py",
+      "size_bytes": 1059,
+      "sha256": "b19c0573453a6d8a47eae5b2a8f07abea6ad5111856e84435cff8514812524da"
+    },
+    {
+      "path": "pipelines/registry_ingestion/roster_ingest.py",
+      "size_bytes": 1097,
+      "sha256": "3457c37bf3d01e36fefa56c256b9b37567e1b663cf238ecca0e8ff0b0e3a507d"
+    },
+    {
+      "path": "pipelines/registry_ingestion/taxonomy.py",
+      "size_bytes": 1143,
+      "sha256": "5f288d1b1f432e6a430c975adfa2fb1bf5c4d0ef14c6e12242417e7a1fed9a4e"
+    },
+    {
+      "path": "pipelines/requirements.txt",
+      "size_bytes": 194,
+      "sha256": "412748ca9140500ad3d0ae46b1d0163435ee12b7dbd880a06767ec86ce73be9f"
+    },
+    {
+      "path": "pipelines/synthetic_data/README.md",
+      "size_bytes": 79,
+      "sha256": "be8b1e1f06668962745444b6eb995b66029b318261e76cb6e0f290187dcda266"
+    },
+    {
+      "path": "pipelines/synthetic_data/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "pipelines/synthetic_data/annotations.py",
+      "size_bytes": 1429,
+      "sha256": "7c924d5bf079b51c6a75e82f8b840af00d0dfa5597571e4e1c0693388ed91dc4"
+    },
+    {
+      "path": "pipelines/synthetic_data/documents.py",
+      "size_bytes": 3886,
+      "sha256": "44ab9a15aae0942d1a50d9e0b05999c524fad6acc1ca4df0910a7ca33cda6467"
+    },
+    {
+      "path": "pipelines/synthetic_data/models.py",
+      "size_bytes": 529,
+      "sha256": "85370ec61c9a929c2394b22bd5072af5c2016181c5c9369016f603193e489001"
+    },
+    {
+      "path": "pipelines/synthetic_data/noise.py",
+      "size_bytes": 1619,
+      "sha256": "feebfb2b524d5c5938eb5fa298211ff12b2d5f0ddd56d3b3f6c860601ce4c07e"
+    },
+    {
+      "path": "pipelines/synthetic_data/policy_engine.py",
+      "size_bytes": 1794,
+      "sha256": "a23ad6210bc5ca22222796f942f0ca4c864c45fb9d52bec554afaf43a6989210"
+    },
+    {
+      "path": "pipelines/synthetic_data/profiles.py",
+      "size_bytes": 1724,
+      "sha256": "1025ab9d9118b19f026ec033be430ad83dfcb3ba52539dc4c4c6131a7059affe"
+    },
+    {
+      "path": "pipelines/synthetic_data/service.py",
+      "size_bytes": 13443,
+      "sha256": "6dbf2f1f34164c2d9746c0f96c297275c91f3eedfb3fd1f878b183dfa7c20fa5"
+    },
+    {
+      "path": "pipelines/synthetic_data/writers.py",
+      "size_bytes": 1398,
+      "sha256": "155e9ebe133abcbc93ce2da5cc1c4a010f6fa5f952fc9d292f1ef04138ca2807"
+    },
+    {
+      "path": "run.py",
+      "size_bytes": 6427,
+      "sha256": "8f623d1efc3edba17fb4c2ea3f2b486f91e15fd728f03e924564f9e7a8fb9995"
+    },
+    {
+      "path": "workers/README.md",
+      "size_bytes": 61,
+      "sha256": "206bfd8962a5f4b47c001c282cc1a09cd79446f8b9e1e63eceb50d6f4f016dd9"
+    }
+  ]
+}

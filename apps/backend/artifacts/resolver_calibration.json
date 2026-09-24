@@ -1,0 +1,28 @@
+{
+  "version": "resolver-calibration-2026.09-v1",
+  "method": "logistic",
+  "features": [
+    "fuzzy",
+    "margin",
+    "bm25",
+    "semantic"
+  ],
+  "intercept": -2.272405449232143,
+  "coefficients": {
+    "fuzzy": 2.2447227242277807,
+    "margin": 7.558647217814167,
+    "bm25": -0.6842136546729964,
+    "semantic": 0.0
+  },
+  "decision_threshold": 0.9,
+  "validation": {
+    "samples": 131,
+    "positive_rate": 0.7786259541984732,
+    "brier": 0.1076856269443895,
+    "roc_auc": 0.9871534820824881,
+    "precision_at_threshold": 1.0,
+    "recall_at_threshold": 0.06862745098039216,
+    "autoaccept_count": 7
+  },
+  "training_note": "Calibration uses deterministic synthetic mention noise derived from the repository registry. It is safe for project/demo gating only; refit on labeled production validation data before real deployment."
+}

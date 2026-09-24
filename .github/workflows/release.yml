@@ -1,0 +1,50 @@
+name: Release Artifact
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e 'apps/backend[dev]'
+      - name: Release regression gate
+        env:
+          DATABASE_URL: 'sqlite+pysqlite:///:memory:'
+          AUTH_DISABLED: 'true'
+          EMBEDDING_ENABLED: 'false'
+          ANTIMALWARE_ENABLED: 'false'
+          RATE_LIMIT_ENABLED: 'false'
+        run: pytest -q apps/backend/tests
+      - name: Build deterministic source bundle
+        run: |
+          git archive --format=tar.gz --prefix=matdanh02/ -o matdanh02-${GITHUB_REF_NAME}.tar.gz HEAD
+          sha256sum matdanh02-${GITHUB_REF_NAME}.tar.gz > matdanh02-${GITHUB_REF_NAME}.sha256
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - name: Attest release bundle
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: matdanh02-${{ github.ref_name }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matdanh02-${{ github.ref_name }}
+          path: |
+            matdanh02-${{ github.ref_name }}.tar.gz
+            matdanh02-${{ github.ref_name }}.sha256
+            sbom.spdx.json

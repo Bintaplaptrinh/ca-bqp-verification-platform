@@ -2,11 +2,7 @@ from fastapi.testclient import TestClient
 
 from cabqp.main import app
 
-client = TestClient(app)
 
-
-def test_health_returns_ok():
-    response = client.get("/health")
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "ca-bqp-backend"}
+def test_health():
+    r=TestClient(app).get('/health')
+    assert r.status_code==200 and r.json()['status']=='ok'

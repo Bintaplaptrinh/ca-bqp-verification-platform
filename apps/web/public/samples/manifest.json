@@ -1,0 +1,91 @@
+{
+  "notice": "Generated identities and policy facts are SYNTHETIC_DEMO. Supplied images are PROVIDED, OCR may require review. Unit references do not verify any individual.",
+  "as_of_date": "2026-09-16",
+  "sources": [
+    "https://www.bocongan.gov.vn/bai-viet/cuc-canh-sat-giao-thong-thong-tin-tien-do-lam-sach-du-lieu-cac-loai-xe-may-bien-so-cu-3-so-4-so-1759747160",
+    "https://www.mod.gov.vn/vn/chi-tiet/sa-ttsk/sa-tt-qpan/bo-tong-tham-muu-quan-doi-nhan-dan-viet-nam-voi-su-nghiep-dau-tranh-giai-phong-dan-toc-xay-dung-va-bao-ve-to-quoc"
+  ],
+  "files": [
+    {
+      "id": "csv",
+      "label": "CSV",
+      "filename": "danh_sach.csv",
+      "content_type": "text/csv",
+      "source_kind": "SYNTHETIC_DEMO"
+    },
+    {
+      "id": "xlsx",
+      "label": "XLSX",
+      "filename": "danh_sach.xlsx",
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "source_kind": "SYNTHETIC_DEMO"
+    },
+    {
+      "id": "docx",
+      "label": "DOCX",
+      "filename": "ho_so.docx",
+      "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "source_kind": "SYNTHETIC_DEMO"
+    },
+    {
+      "id": "pdf-text",
+      "label": "PDF text",
+      "filename": "ho_so_text.pdf",
+      "content_type": "application/pdf",
+      "source_kind": "SYNTHETIC_DEMO"
+    },
+    {
+      "id": "pdf-scan",
+      "label": "PDF scan · 2 trang",
+      "filename": "ho_so_scan.pdf",
+      "content_type": "application/pdf",
+      "source_kind": "PROVIDED"
+    },
+    {
+      "id": "image-bca",
+      "label": "Ảnh BCA",
+      "filename": "bca_sample_image.jpg",
+      "content_type": "image/jpeg",
+      "source_kind": "PROVIDED"
+    },
+    {
+      "id": "image-bqp",
+      "label": "Ảnh BQP",
+      "filename": "bqp_sample_image.jpg",
+      "content_type": "image/jpeg",
+      "source_kind": "PROVIDED"
+    }
+  ],
+  "manual": [
+    {
+      "fullName": "Nguyễn Minh An",
+      "birthYear": "1985",
+      "department": "Cục Cảnh sát giao thông",
+      "position": "Đại úy",
+      "identifier": "DEMO-001",
+      "salary": "Có",
+      "subjectGroup": "BCA_SI_QUAN",
+      "employmentStatus": "ACTIVE",
+      "contributionMonths": "240",
+      "requestedRegime": "DEMO_RETIREMENT",
+      "sourceKind": "SYNTHETIC_DEMO",
+      "asOfDate": "2026-09-16",
+      "extraInfo": "Hồ sơ mẫu SYNTHETIC_DEMO; hưởng lương"
+    },
+    {
+      "fullName": "Trần Hải Bình",
+      "birthYear": "1987",
+      "department": "Bộ Tổng Tham mưu",
+      "position": "Thiếu tá",
+      "identifier": "DEMO-002",
+      "salary": "Có",
+      "subjectGroup": "BQP_SI_QUAN",
+      "employmentStatus": "ACTIVE",
+      "contributionMonths": "180",
+      "requestedRegime": "DEMO_RETIREMENT",
+      "sourceKind": "SYNTHETIC_DEMO",
+      "asOfDate": "2026-09-16",
+      "extraInfo": "Hồ sơ mẫu SYNTHETIC_DEMO; hưởng lương"
+    }
+  ]
+}

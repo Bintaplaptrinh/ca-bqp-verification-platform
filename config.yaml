@@ -1,0 +1,263 @@
+project:
+  name: "CA/BQP Verification Dataset Pipeline"
+  version: "2026.09-autocrawl-single-config-v2"
+
+paths:
+  raw_sources: "artifacts/registry/raw"
+  extracted_candidates: "artifacts/registry/candidates"
+  registry_published: "artifacts/registry/published/master_units_registry.csv"
+  coverage_report: "artifacts/registry/published/coverage_report.json"
+  synthetic_output: "artifacts/synthetic"
+  documents_output: "artifacts/synthetic/documents"
+
+registry:
+  publish_version_prefix: "2026.09-auto"
+  approval_mode: "STRICT_AUTO"
+
+  # Crawl is the default source of truth.
+  crawler:
+    enabled: true
+    respect_robots_txt: false
+    timeout_seconds: 15
+    delay_seconds: 0.10
+    max_retries: 3
+    max_depth: 8
+    max_pages_per_source: 40000
+    max_pdf_mb: 50
+    follow_same_site_links: true
+    discover_sitemaps: true
+    fail_policy: "CONTINUE_WITH_CURATED"
+
+  # Source roles:
+  # AUTHORITATIVE_LIST -> one strong hit can be auto-approved.
+  # OFFICIAL_DISCOVERY -> requires corroboration or exact current-list context.
+  sources:
+
+    # -------------------- BCA --------------------
+    - source_id: "bca_portal"
+      organization_type: "BCA"
+      role: "OFFICIAL_DISCOVERY"
+      allowed_host_suffixes:
+        - "bocongan.gov.vn"
+        - "cand.com.vn"
+      seed_urls:
+        - "https://www.bocongan.gov.vn/"
+        - "https://cand.com.vn/"
+        - "https://www.bocongan.gov.vn/bai-viet/cum-thi-dua-so-6-khoi-cac-don-vi-truc-thuoc-bo-ky-giao-uoc-thi-dua-nam-2026-1770780140"
+        - "https://www.bocongan.gov.vn/bai-viet/cum-thi-dua-so-4-khoi-cac-don-vi-truc-thuoc-bo-cong-an-ky-ket-giao-uoc-thi-dua-1774870277"
+        - "https://bocongan.gov.vn/bai-viet/cum-thi-dua-so-5-khoi-cac-don-vi-truc-thuoc-bo-ky-giao-uoc-thi-dua-vi-an-ninh-to-quoc-nam-2026-1772792753"
+        - "https://bocongan.gov.vn/bai-viet/cum-thi-dua-so-2-tri-an-tu-coi-nguon-lan-toa-yeu-thuong-noi-co-so-1777171283"
+        - "https://bocongan.gov.vn/bai-viet/thong-tin-tuyen-sinh-cac-hoc-vien-truong-cong-an-nhan-dan-nam-2026-1773897621"
+      relevant_url_keywords:
+        - "don-vi"
+        - "cum-thi-dua"
+        - "hoc-vien"
+        - "truong-cong-an"
+        - "benh-vien"
+        - "cong-an"
+        - "to-chuc"
+        - "tuyen-sinh"
+      relevant_text_keywords:
+        - "đơn vị trực thuộc Bộ"
+        - "Cục "
+        - "Bộ Tư lệnh"
+        - "Học viện"
+        - "Trường Đại học"
+        - "Trường Cao đẳng"
+        - "Bệnh viện"
+        - "Công an tỉnh"
+        - "Công an thành phố"
+        - "Công an xã"
+        - "Công an phường"
+        - "Công an đặc khu"
+
+    - source_id: "bca_local_reorg"
+      organization_type: "BCA"
+      role: "AUTHORITATIVE_LIST"
+      allowed_host_suffixes:
+        - "bocongan.gov.vn"
+      seed_urls:
+        - "https://hvannd.bocongan.gov.vn/bv/ct/16427/thong-cao-bao-chi-ve-trien-khai-sap-xep-to-chuc-cong-an-cap-tinh-cap-xa-theo-chu-truong-sap-xep-to-chuc-lai-don-vi-hanh-chinh-cac-cap-"
+        - "https://www.bocongan.gov.vn/bai-viet/chi-dao-dieu-hanh-noi-bat-cua-lanh-dao-bo-cong-an-trong-tuan-tu-ngay-226---2862025-d24-t45790"
+      relevant_text_keywords:
+        - "34 Công an cấp tỉnh"
+        - "3.319 Công an cấp xã"
+        - "Công an tỉnh"
+        - "Công an thành phố"
+        - "Công an xã"
+        - "Công an phường"
+        - "Công an đặc khu"
+
+    # -------------------- BQP --------------------
+    - source_id: "bqp_portal"
+      organization_type: "BQP"
+      role: "OFFICIAL_DISCOVERY"
+      allowed_host_suffixes:
+        - "mod.gov.vn"
+        - "qdnd.vn"
+        - "bienphong.com.vn"
+      seed_urls:
+        - "https://mod.gov.vn/"
+        - "https://www.qdnd.vn/"
+        - "https://www.bienphong.com.vn/"
+        - "https://mod.gov.vn/home/detail?current=true&urile=wcm%3Apath%3A%2Fmod%2Fsa-mod-site%2Fsa-qdndvn%2Fsa-qdndvn-child%2Fsa-qdndvn-gt%2Fchuc-nang-nhiem-vu-co-cau-to-chuc-cua-quan-doi-nhan-dan-viet-nam"
+        - "https://mod.gov.vn/home/intro/detail?1dmy=&current=true&urile=wcm%3Apath%3A%2Fmod%2Fsa-mod-site%2Fsa-qpvn%2Fsa-qpvn-bqp-root%2Fsa-qpvn-bqp-child-hvntcy%2Fcac-hoc-vien-nha-truong-chu-yeu"
+        - "https://www.mod.gov.vn/vn/chi-tiet/sa-ttsk/sa-tt-qpan/dang-uy-bttm-co-quan-bqp-lanh-dao-thuc-hien-thang-loi-cong-tac-quan-su-quoc-phong-gop-phan-xay-dung-qdnd-viet-nam-cach-mang-chinh-quy-tinh-nhue-hien-dai"
+      relevant_url_keywords:
+        - "qpvn"
+        - "quan-khu"
+        - "quan-chung"
+        - "binh-chung"
+        - "quan-doan"
+        - "hoc-vien"
+        - "nha-truong"
+        - "benh-vien"
+        - "bo-chi-huy"
+        - "bo-doi-bien-phong"
+        - "to-chuc"
+      relevant_text_keywords:
+        - "Bộ Tổng Tham mưu"
+        - "Tổng cục"
+        - "Quân khu"
+        - "Quân chủng"
+        - "Binh chủng"
+        - "Quân đoàn"
+        - "Bộ Tư lệnh"
+        - "Bộ Chỉ huy quân sự"
+        - "Ban Chỉ huy Bộ đội Biên phòng"
+        - "Sư đoàn"
+        - "Lữ đoàn"
+        - "Trung đoàn"
+        - "Học viện"
+        - "Trường Sĩ quan"
+        - "Bệnh viện"
+        - "Viện "
+        - "Trung tâm"
+
+  extraction:
+    min_candidate_chars: 5
+    max_candidate_chars: 180
+    candidate_context_chars: 260
+    corroboration_required_for_discovery: 2
+
+  # Only use curated files for things crawler cannot obtain reliably.
+  # These are fallback inputs, NOT the primary source.
+  curated_fallbacks:
+    - fallback_id: "baseline43"
+      enabled: true
+      path: "datasets/curated/master_units_baseline43.csv"
+      reason: "Known published baseline; guarantees minimum continuity if official sites are unavailable."
+
+    - fallback_id: "bca_commune_roster"
+      enabled: true
+      path: "datasets/curated/bca_commune_police_current.csv"
+      reason: "Enable only when an authoritative/current 3,319-name roster is obtained."
+
+    - fallback_id: "bqp_provincial_commands"
+      enabled: true
+      path: "datasets/curated/bqp_provincial_commands_current.csv"
+      reason: "Enable when current authoritative 34-name roster is obtained."
+
+    - fallback_id: "bqp_border_guard_commands"
+      enabled: true
+      path: "datasets/curated/bqp_border_guard_commands_current.csv"
+      reason: "Enable when current authoritative 30-name roster is obtained."
+
+    - fallback_id: "bqp_extended_units"
+      enabled: true
+      path: "datasets/curated/bqp_extended_units.csv"
+      reason: "Extended BQP units including Army Divisions, Brigades, Regiments, Military Academies, Hospitals, and Corporations."
+
+  coverage_targets:
+    - group_id: "BCA_PROVINCIAL_POLICE"
+      organization_type: "BCA"
+      expected_count: 34
+      mode: "COUNT_PLUS_PUBLIC_EVIDENCE"
+
+    - group_id: "BCA_COMMUNE_POLICE"
+      organization_type: "BCA"
+      expected_count: 3319
+      mode: "ROSTER_REQUIRED_FOR_COMPLETE"
+
+    - group_id: "BCA_CENTRAL_PUBLIC"
+      organization_type: "BCA"
+      expected_count: null
+      mode: "PUBLIC_SATURATION"
+
+    - group_id: "BQP_MILITARY_REGIONS"
+      organization_type: "BQP"
+      expected_count: 7
+      mode: "COUNT_PLUS_PUBLIC_EVIDENCE"
+
+    - group_id: "BQP_ARMY_CORPS"
+      organization_type: "BQP"
+      expected_count: 2
+      mode: "COUNT_PLUS_PUBLIC_EVIDENCE"
+
+    - group_id: "BQP_PROVINCIAL_COMMANDS"
+      organization_type: "BQP"
+      expected_count: 34
+      mode: "ROSTER_REQUIRED_FOR_COMPLETE"
+
+    - group_id: "BQP_BORDER_GUARD_COMMANDS"
+      organization_type: "BQP"
+      expected_count: 30
+      mode: "ROSTER_REQUIRED_FOR_COMPLETE"
+
+    - group_id: "BQP_CENTRAL_PUBLIC"
+      organization_type: "BQP"
+      expected_count: null
+      mode: "PUBLIC_SATURATION"
+
+    - group_id: "BQP_PUBLIC_SUBORDINATE"
+      organization_type: "BQP"
+      expected_count: null
+      mode: "PUBLIC_SATURATION"
+
+synthetic:
+  enabled: true
+  seed: 42
+  records_per_unit: 5
+  history_ratio: 0.10
+
+  noise_weights:
+    CLEAN: 45
+    NO_ACCENT: 13
+    LOWERCASE: 9
+    TYPO_UNIT: 17
+    ABBREVIATION: 9
+    OCR_LIKE: 7
+
+  document_type_weights:
+    TEXT: 25
+    PDF_TEXT: 18
+    PDF_SCAN: 12
+    DOCX: 15
+    XLSX_ROW: 23
+    IMAGE: 7
+
+  hard_cases:
+    enabled: true
+    records_per_type: 250
+    types: [UNKNOWN, AMBIGUOUS, CONFLICT]
+
+  split:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+
+policy:
+  snapshot_version: "SYNTHETIC-DEMO-2026.09-v3"
+  taxonomy_version: "SYNTHETIC-TAXONOMY-1.0"
+  effective_from: "2025-01-01"
+  effective_to: null
+
+documents:
+  enabled: false
+  limit: 500
+  batch_size: 50
+
+quality:
+  fail_on_duplicate_record_id: true
+  fail_on_unit_split_leakage: true
+  fail_on_not_found_as_other: true

@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="vi" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Hướng dẫn sử dụng Hệ thống xác minh nhân sự Bộ Công an - Bộ Quốc phòng." />
+    <title>Hướng dẫn sử dụng | Hệ thống xác minh nhân sự CA/BQP</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+      :root {
+        --guide-ink: #17243a;
+        --guide-muted: #5d6d85;
+        --guide-paper: #f7f8fb;
+        --guide-red: #bc1f2d;
+        --guide-gold: #e3b34d;
+        --guide-line: #dce2ec;
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; background: var(--guide-paper); }
+      body { margin: 0; color: var(--guide-ink); font-family: Arial, Helvetica, sans-serif; }
+      button, a { font: inherit; }
+      .slide {
+        position: relative;
+        display: grid;
+        min-height: 100svh;
+        padding: 5.25rem clamp(1.25rem, 5vw, 6rem) 4.5rem;
+        overflow: hidden;
+        scroll-snap-align: start;
+      }
+      .slide::before {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 5px;
+        content: "";
+        background: linear-gradient(90deg, var(--guide-red), var(--guide-gold));
+      }
+      .slide--cover {
+        color: white;
+        background:
+          radial-gradient(circle at 80% 18%, rgba(227, 179, 77, .32), transparent 22rem),
+          linear-gradient(135deg, #67111d 0%, #9d1525 45%, #b71b2c 100%);
+      }
+      .slide--cover::before { background: var(--guide-gold); }
+      .slide-inner { width: min(1360px, 100%); margin: auto; }
+      .cover-grid, .content-grid { display: grid; gap: clamp(1.5rem, 4vw, 4rem); align-items: center; }
+      .cover-grid { grid-template-columns: minmax(0, 1.1fr) minmax(22rem, .9fr); }
+      .content-grid { grid-template-columns: minmax(20rem, .65fr) minmax(0, 1.35fr); }
+      .content-grid--reverse { grid-template-columns: minmax(0, 1.35fr) minmax(20rem, .65fr); }
+      .eyebrow { margin: 0 0 .8rem; font-size: .78rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--guide-red); }
+      .slide--cover .eyebrow { color: #ffe19a; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1 { margin-bottom: 1.25rem; font-size: clamp(2.4rem, 5vw, 5.4rem); line-height: .98; letter-spacing: -.055em; }
+      h2 { margin-bottom: .9rem; font-size: clamp(2rem, 3.1vw, 3.6rem); line-height: 1.04; letter-spacing: -.04em; }
+      h3 { margin-bottom: .5rem; font-size: 1.05rem; }
+      .lead { max-width: 46rem; margin-bottom: 1.5rem; font-size: clamp(1.02rem, 1.5vw, 1.35rem); line-height: 1.58; color: inherit; opacity: .9; }
+      .slide:not(.slide--cover) .lead { color: var(--guide-muted); opacity: 1; }
+      .hero-stamp { display: grid; gap: .5rem; max-width: 28rem; padding: 2.2rem; color: #fff1c7; border: 1px solid rgba(255,255,255,.2); background: rgba(56, 4, 13, .28); box-shadow: 0 25px 60px rgba(44, 3, 9, .3); backdrop-filter: blur(8px); }
+      .hero-stamp strong { font-size: clamp(3.4rem, 7vw, 7rem); line-height: .8; letter-spacing: -.08em; }
+      .meta { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1.65rem; }
+      .meta .badge { padding: .7rem .9rem; color: white; border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.1); }
+      .shot { padding: .65rem; border: 1px solid var(--guide-line); border-radius: 1rem; background: #fff; box-shadow: 0 22px 54px rgba(30, 48, 77, .16); }
+      .shot img { display: block; width: 100%; max-height: 70svh; object-fit: contain; object-position: center; border-radius: .55rem; }
+      .shot-caption { display: flex; gap: .6rem; align-items: center; padding: .65rem .25rem .08rem; font-size: .82rem; color: var(--guide-muted); }
+      .step-no { display: inline-grid; width: 2rem; height: 2rem; place-items: center; flex: none; color: white; font-size: .9rem; font-weight: 800; border-radius: 50%; background: var(--guide-red); }
+      .guide-card { border: 1px solid var(--guide-line); background: rgba(255,255,255,.82); box-shadow: 0 12px 34px rgba(30, 48, 77, .07); }
+      .guide-card .card-body { gap: .2rem; }
+      .guide-card p, .guide-card li { color: var(--guide-muted); line-height: 1.5; }
+      .tip { margin-top: 1rem; padding: 1rem 1.1rem; color: #684d00; border: 1px solid #f1d585; background: #fff8dc; }
+      .tip strong { color: #3e2d00; }
+      .task-list { display: grid; gap: .8rem; margin-top: 1.4rem; }
+      .task { display: flex; gap: .85rem; align-items: flex-start; padding: 1rem; border-left: 3px solid var(--guide-red); background: #fff; box-shadow: 0 5px 16px rgba(30, 48, 77, .05); }
+      .task p { margin: .15rem 0 0; font-size: .92rem; color: var(--guide-muted); line-height: 1.45; }
+      .workflow { display: grid; gap: .7rem; margin: 1.5rem 0; }
+      .workflow-row { display: grid; grid-template-columns: 2.75rem minmax(0, 1fr); gap: .85rem; align-items: center; padding: .7rem .8rem; border: 1px solid var(--guide-line); border-radius: .65rem; background: #fff; box-shadow: 0 5px 14px rgba(30, 48, 77, .04); }
+      .workflow-icon { display: grid; width: 2.5rem; height: 2.5rem; place-items: center; color: #fff; border-radius: .6rem; background: var(--guide-red); }
+      .material-symbols-rounded { font-family: 'Material Symbols Rounded'; font-weight: normal; font-style: normal; font-size: 1.35rem; line-height: 1; letter-spacing: normal; text-transform: none; white-space: nowrap; word-wrap: normal; direction: ltr; font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24; -webkit-font-smoothing: antialiased; }
+      .workflow-row p { margin: 0; color: var(--guide-ink); font-size: .94rem; line-height: 1.45; }
+      .slide-footer { position: absolute; right: clamp(1.25rem, 5vw, 6rem); bottom: 1.4rem; left: clamp(1.25rem, 5vw, 6rem); display: flex; align-items: center; justify-content: space-between; color: var(--guide-muted); font-size: .75rem; }
+      .slide--cover .slide-footer { color: rgba(255,255,255,.7); }
+      .slide-number { font-weight: 800; letter-spacing: .08em; }
+      .guide-controls { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 10; display: flex; gap: .5rem; padding: .5rem; border: 1px solid var(--guide-line); border-radius: 999px; background: rgba(255,255,255,.92); box-shadow: 0 10px 30px rgba(30, 48, 77, .17); backdrop-filter: blur(8px); }
+      .guide-controls .btn { min-height: 2.15rem; height: 2.15rem; }
+      .quick-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.7rem; }
+      .quick-grid .card { min-height: 12.5rem; }
+      .closing { max-width: 58rem; text-align: center; }
+      .closing .alert { margin: 1.75rem auto; max-width: 44rem; text-align: left; }
+      kbd { padding: .1rem .35rem; border: 1px solid var(--guide-line); border-radius: .25rem; background: #fff; font-size: .78rem; }
+
+      @media (max-width: 900px) {
+        .slide { padding-top: 4.5rem; }
+        .cover-grid, .content-grid, .content-grid--reverse { grid-template-columns: 1fr; }
+        .quick-grid { grid-template-columns: 1fr; }
+        .shot img { max-height: none; }
+        .hero-stamp { max-width: none; }
+      }
+
+      @media print {
+        @page { size: landscape; margin: 0; }
+        html { scroll-behavior: auto; }
+        .slide { min-height: 100vh; height: 100vh; padding: 3.8rem 5rem 3rem; break-after: page; }
+        .guide-controls { display: none; }
+        .slide-footer { bottom: .8rem; }
+        .shot img { max-height: 62vh; }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="guide">
+      <section class="slide slide--cover" id="slide-1" aria-labelledby="cover-title">
+        <div class="slide-inner cover-grid">
+          <div>
+            <p class="eyebrow">Tài liệu dành cho người dùng</p>
+            <h1 id="cover-title">Xác minh nhân sự<br />CA/BQP</h1>
+            <p class="lead">Hướng dẫn tra cứu hồ sơ, kiểm tra kết quả và theo dõi các lượt tra cứu đã thực hiện trên hệ thống.</p>
+            <div class="meta">
+              <!-- <span class="badge badge-outline">Phiên bản hướng dẫn 1.0</span> -->
+              <span class="badge badge-outline">Cập nhật 19/09/2026</span>
+              <span class="badge badge-outline">7 thao tác chính</span>
+            </div>
+          </div>
+          <aside class="hero-stamp rounded-box" aria-label="Mục tiêu của hướng dẫn">
+            <span>Tra cứu rõ ràng</span>
+            <strong>01 - 07</strong>
+            <span>Đăng nhập - Đổi mật khẩu - Nhập thông tin - Đọc kết quả - Tải tệp - Kiểm tra trích xuất - Xem lịch sử</span>
+          </aside>
+        </div>
+        <footer class="slide-footer"><span>HỆ THỐNG XÁC MINH NHÂN SỰ BỘ CÔNG AN - BỘ QUỐC PHÒNG</span><span class="slide-number">01 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-2" aria-labelledby="start-title">
+        <div class="slide-inner">
+          <p class="eyebrow">Trước khi bắt đầu</p>
+          <h2 id="start-title">Bạn cần biết gì?</h2>
+          <p class="lead">Hệ thống dùng để xác định thông tin đơn vị công tác có thuộc phạm vi Bộ Công an hoặc Bộ Quốc phòng hay không. Kết quả cần được đọc cùng trạng thái và bằng chứng hiển thị trên màn hình.</p>
+          <div class="quick-grid">
+            <article class="card guide-card">
+              <div class="card-body">
+                <span class="badge badge-outline">Tài khoản</span>
+                <h3 class="card-title">Đăng nhập bằng tài khoản được cấp</h3>
+                <p>Tài khoản do quản trị viên hệ thống cấp. Hãy đổi mật khẩu khi hệ thống yêu cầu và không chia sẻ tài khoản.</p>
+              </div>
+            </article>
+            <article class="card guide-card">
+              <div class="card-body">
+                <span class="badge badge-outline">Thông tin đầu vào</span>
+                <h3 class="card-title">Chuẩn bị dữ liệu chính xác</h3>
+                <p>Khi nhập biểu mẫu, cần có họ tên hoặc mã số cán bộ và đơn vị công tác. Có thể bổ sung chức vụ, năm sinh hoặc ghi chú.</p>
+              </div>
+            </article>
+            <article class="card guide-card">
+              <div class="card-body">
+                <span class="badge badge-outline">Trách nhiệm</span>
+                <h3 class="card-title">Không tự suy diễn khi chưa đủ dữ liệu</h3>
+                <p>Nếu màn hình báo cần kiểm tra hoặc chưa đủ dữ liệu, hãy hoàn thiện hồ sơ hoặc chuyển theo quy trình nghiệp vụ của đơn vị.</p>
+              </div>
+            </article>
+          </div>
+          <div role="alert" class="alert tip"><span><strong>Lưu ý:</strong> mỗi tài khoản chỉ thấy các chức năng được phân quyền. Hướng dẫn này tập trung vào thao tác tra cứu thông thường.</span></div>
+        </div>
+        <footer class="slide-footer"><span>Chuẩn bị tài khoản và hồ sơ cần tra cứu</span><span class="slide-number">02 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-3" aria-labelledby="login-title">
+        <div class="slide-inner content-grid">
+          <div>
+            <p class="eyebrow">Bước 1</p>
+            <h2 id="login-title">Đăng nhập</h2>
+            <p class="lead">Mở hệ thống, sau đó nhập tên đăng nhập và mật khẩu.</p>
+            <div class="task-list">
+              <div class="task"><span class="step-no">1</span><div><h3>Nhập tên đăng nhập</h3><p>Dùng đúng tài khoản cá nhân do quản trị viên cấp.</p></div></div>
+              <div class="task"><span class="step-no">2</span><div><h3>Nhập mật khẩu</h3><p>Chọn <em>Hiện</em> chỉ khi cần kiểm tra.</p></div></div>
+              <div class="task"><span class="step-no">3</span><div><h3>Chọn “Đăng nhập”</h3><p>Sau khi vào hệ thống, màn hình <strong>Tra cứu</strong> sẽ mở mặc định.</p></div></div>
+            </div>
+          </div>
+          <figure class="shot"><img src="assets/01-dang-nhap.png" alt="Màn hình đăng nhập Hệ thống xác minh nhân sự CA/BQP" /><figcaption class="shot-caption"><span class="step-no">1</span> Màn hình đăng nhập thực tế.</figcaption></figure>
+        </div>
+        <footer class="slide-footer"><span>Không chia sẻ mật khẩu hoặc phiên đăng nhập</span><span class="slide-number">03 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-change-password" aria-labelledby="change-password-title">
+        <div class="slide-inner content-grid content-grid--reverse">
+          <figure class="shot"><img src="assets/01-01-doi-mat-khau.png" alt="Màn hình đổi mật khẩu sau lần đăng nhập đầu tiên hoặc sau khi được cấp lại mật khẩu" /><figcaption class="shot-caption"><span class="step-no">2</span> Đổi mật khẩu được cấp thành mật khẩu riêng của bạn.</figcaption></figure>
+          <div>
+            <p class="eyebrow">Bước 2</p>
+            <h2 id="change-password-title">Đổi mật khẩu khi được yêu cầu</h2>
+            <p class="lead">Sau lần đăng nhập đầu tiên hoặc khi quản trị viên cấp lại mật khẩu, hệ thống hiển thị màn hình đổi mật khẩu riêng.</p>
+            <div class="workflow" role="list" aria-label="Các bước đổi mật khẩu">
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">password</span><p>Nhập <strong>mật khẩu được cấp</strong> ở ô đầu tiên.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">lock_reset</span><p>Nhập mật khẩu mới và nhập lại chính xác ở ô xác nhận.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">verified_user</span><p>Chọn <strong>Đặt mật khẩu mới</strong> để hoàn tất.</p></div>
+            </div>
+            <div role="alert" class="alert tip"><span><strong>Lưu ý:</strong> dùng mật khẩu riêng, khó đoán và không dùng lại mật khẩu đã cấp hoặc mật khẩu của hệ thống khác.</span></div>
+          </div>
+        </div>
+        <footer class="slide-footer"><span>Đổi mật khẩu sau đăng nhập lần đầu hoặc cấp lại mật khẩu</span><span class="slide-number">04 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-otp-account" aria-labelledby="otp-account-title">
+        <div class="slide-inner content-grid">
+          <div>
+            <p class="eyebrow">Tùy chọn đăng nhập</p>
+            <h2 id="otp-account-title">Đăng nhập bằng mã một lần</h2>
+            <p class="lead">Đây là lựa chọn đăng nhập thay thế cho mật khẩu. Mã đăng nhập được gửi vào hộp thư của tài khoản.</p>
+            <div class="workflow" role="list" aria-label="Thao tác yêu cầu mã đăng nhập một lần">
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">pin</span><p>Trên màn hình đăng nhập, chọn thẻ <strong>Mã một lần</strong>.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">person</span><p>Nhập đúng tên đăng nhập của tài khoản.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">send</span><p>Chọn <strong>Gửi mã đăng nhập</strong> và kiểm tra hộp thư.</p></div>
+            </div>
+            <div role="alert" class="alert alert-info"><span>Mã chỉ được gửi tới hộp thư đã đăng ký của tài khoản. Không chuyển tiếp mã cho người khác.</span></div>
+          </div>
+          <figure class="shot"><img src="assets/01-1-dang-nhap-bang-ma-mot-lan.png" alt="Giao diện nhập tên đăng nhập để nhận mã đăng nhập một lần" /><figcaption class="shot-caption"><span class="badge badge-outline">Tùy chọn</span> Nhập tên đăng nhập để hệ thống gửi mã một lần.</figcaption></figure>
+        </div>
+        <footer class="slide-footer"><span>Phương thức đăng nhập thay thế cho mật khẩu</span><span class="slide-number">05 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-otp-code" aria-labelledby="otp-code-title">
+        <div class="slide-inner content-grid content-grid--reverse">
+          <figure class="shot"><img src="assets/01-2-dang-nhap-bang-otp-1-lan.png" alt="Giao diện nhập mã OTP đăng nhập một lần" /><figcaption class="shot-caption"><span class="badge badge-outline">Tùy chọn</span> Nhập mã OTP được gửi tới hộp thư của tài khoản.</figcaption></figure>
+          <div>
+            <p class="eyebrow">Đăng nhập bằng mã một lần</p>
+            <h2 id="otp-code-title">Nhập mã OTP</h2>
+            <p class="lead">Sau khi yêu cầu mã, mở hộp thư của tài khoản và nhập mã gồm 6 chữ số trong thời gian còn hiệu lực.</p>
+            <div class="workflow" role="list" aria-label="Thao tác nhập mã OTP">
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">mail</span><p>Kiểm tra hộp thư để nhận mã đăng nhập 6 chữ số.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">dialpad</span><p>Nhập đủ mã vào ô <strong>Mã đăng nhập</strong>.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">check_circle</span><p>Chọn <strong>Xác nhận mã</strong> để vào hệ thống.</p></div>
+            </div>
+            <div role="alert" class="alert tip"><span><strong>Lưu ý:</strong> mã có thời hạn ngắn và chỉ dùng một lần. Nếu hết hạn, chọn gửi lại mã theo thời gian hiển thị.</span></div>
+          </div>
+        </div>
+        <footer class="slide-footer"><span>Hoàn tất phương thức đăng nhập bằng mã một lần</span><span class="slide-number">06 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-4" aria-labelledby="form-title">
+        <div class="slide-inner content-grid content-grid--reverse">
+          <figure class="shot"><img src="assets/02-tra-cuu-bieu-mau.png" alt="Màn hình tra cứu theo biểu mẫu" /><figcaption class="shot-caption"><span class="step-no">3</span> Tra cứu theo biểu mẫu là lựa chọn phù hợp khi đã có thông tin rõ ràng.</figcaption></figure>
+          <div>
+            <p class="eyebrow">Bước 3</p>
+            <h2 id="form-title">Nhập thông tin để tra cứu</h2>
+            <p class="lead">Tại thẻ <strong>Nhập thông tin</strong>, chọn cách cung cấp dữ liệu phù hợp.</p>
+            <div class="workflow" role="list" aria-label="Các bước nhập thông tin">
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">edit_note</span><p>Chọn <strong>Theo biểu mẫu</strong> để nhập từng trường.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">badge</span><p>Điền họ tên hoặc mã số cán bộ, kèm đơn vị công tác.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">domain</span><p>Bổ sung năm sinh, chức vụ hoặc ghi chú nếu có.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">search</span><p>Chọn <strong>Tra cứu</strong> để gửi hồ sơ.</p></div>
+            </div>
+            <div role="alert" class="alert alert-info"><span>Chọn <strong>Tra cứu tự do</strong> khi cần dán nội dung văn bản thay vì điền từng ô.</span></div>
+          </div>
+        </div>
+        <footer class="slide-footer"><span>Biểu mẫu giúp kiểm soát thông tin đầu vào</span><span class="slide-number">07 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-5" aria-labelledby="result-title">
+        <div class="slide-inner content-grid">
+          <div>
+            <p class="eyebrow">Bước 4</p>
+            <h2 id="result-title">Đọc kết quả xác minh</h2>
+            <p class="lead">Sau khi xử lý, hãy đọc trạng thái ở phần đầu kết quả trước, sau đó đối chiếu thông tin định danh và đơn vị được hệ thống nhận diện.</p>
+            <div class="task-list">
+              <div class="task"><span class="step-no">✓</span><div><h3>Đã xác minh</h3><p>Hồ sơ có kết quả phù hợp với dữ liệu quản lý; vẫn cần kiểm tra các thông tin hiển thị.</p></div></div>
+              <div class="task"><span class="step-no">?</span><div><h3>Cần kiểm tra</h3><p>Có thể có nhiều kết quả phù hợp hoặc chất lượng dữ liệu chưa đủ. Không chọn kết luận thay hệ thống.</p></div></div>
+              <div class="task"><span class="step-no">-</span><div><h3>Chưa có kết luận</h3><p>Không có đủ căn cứ để xác định phạm vi quản lý. Bổ sung hoặc hiệu đính dữ liệu trước khi tra cứu lại.</p></div></div>
+            </div>
+          </div>
+          <figure class="shot"><img src="assets/03-ket-qua-xac-minh.png" alt="Màn hình kết quả xác minh đơn vị thuộc phạm vi quản lý" /><figcaption class="shot-caption"><span class="step-no">4</span> Ví dụ kết quả có trạng thái “Đơn vị thuộc phạm vi quản lý”.</figcaption></figure>
+        </div>
+        <footer class="slide-footer"><span>Trạng thái và bằng chứng là cơ sở để xử lý tiếp</span><span class="slide-number">08 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-6" aria-labelledby="upload-title">
+        <div class="slide-inner content-grid content-grid--reverse">
+          <figure class="shot"><img src="assets/04-tai-tai-lieu.png" alt="Màn hình tải tài liệu lên để tra cứu" /><figcaption class="shot-caption"><span class="step-no">5</span> Tải một hồ sơ có sẵn để hệ thống trích xuất dữ liệu.</figcaption></figure>
+          <div>
+            <p class="eyebrow">Bước 5</p>
+            <h2 id="upload-title">Tra cứu từ tài liệu</h2>
+            <p class="lead">Nếu đã có hồ sơ, chuyển sang thẻ <strong>Tải tài liệu</strong> để giảm thao tác nhập tay.</p>
+            <div class="workflow" role="list" aria-label="Các bước tải tài liệu">
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">upload_file</span><p>Chọn <strong>Tải tài liệu</strong>.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">folder_open</span><p>Kéo thả tệp hoặc chọn tệp từ máy tính.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">document_scanner</span><p>Chờ hệ thống đọc và trích xuất thông tin.</p></div>
+              <div class="workflow-row" role="listitem"><span class="workflow-icon material-symbols-rounded" aria-hidden="true">fact_check</span><p>Kiểm tra thông tin nhận dạng trước khi xác minh.</p></div>
+            </div>
+            <div role="alert" class="alert tip"><span><strong>Mẹo:</strong> ảnh hoặc bản scan rõ nét, đủ trang và không bị che khuất sẽ cho kết quả trích xuất đáng tin cậy hơn.</span></div>
+          </div>
+        </div>
+        <footer class="slide-footer"><span>Hỗ trợ tài liệu văn bản, bảng tính và ảnh hồ sơ</span><span class="slide-number">09 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-7" aria-labelledby="review-title">
+        <div class="slide-inner content-grid">
+          <div>
+            <p class="eyebrow">Bước 6</p>
+            <h2 id="review-title">Kiểm tra phần hệ thống đã đọc</h2>
+            <p class="lead">Màn hình kiểm tra cho phép bạn xem thông tin được trích xuất từ tài liệu. Hãy đối chiếu với hồ sơ gốc trước khi tiếp tục.</p>
+            <div class="task-list">
+              <div class="task"><span class="step-no">1</span><div><h3>Đối chiếu họ tên, mã số và đơn vị</h3><p>Đây là các thông tin ảnh hưởng trực tiếp đến kết quả xác minh.</p></div></div>
+              <div class="task"><span class="step-no">2</span><div><h3>Hiệu đính khi cần</h3><p>Sửa lỗi nhận dạng hoặc bổ sung dữ liệu thiếu theo hồ sơ gốc.</p></div></div>
+              <div class="task"><span class="step-no">3</span><div><h3>Tiếp tục xác minh</h3><p>Chỉ gửi tra cứu khi các thông tin nhận dạng đã được kiểm tra.</p></div></div>
+            </div>
+            <div role="alert" class="alert alert-warning"><span>Việc hiệu đính chỉ áp dụng cho hồ sơ đang xử lý; hãy lưu ý đối chiếu với tài liệu gốc.</span></div>
+          </div>
+          <figure class="shot"><img src="assets/05-kiem-tra-trich-xuat.png" alt="Màn hình kiểm tra thông tin nhận dạng trích xuất từ tệp" /><figcaption class="shot-caption"><span class="step-no">6</span> Xem lại dữ liệu trích xuất trước khi ra kết quả.</figcaption></figure>
+        </div>
+        <footer class="slide-footer"><span>Luôn dùng hồ sơ gốc để đối chiếu</span><span class="slide-number">10 / 11</span></footer>
+      </section>
+
+      <section class="slide" id="slide-8" aria-labelledby="history-title">
+        <div class="slide-inner content-grid content-grid--reverse">
+          <figure class="shot"><img src="assets/06-lich-su.png" alt="Màn hình lịch sử tra cứu hồ sơ" /><figcaption class="shot-caption"><span class="step-no">7</span> Xem lại các lượt tra cứu đã lưu trong hệ thống.</figcaption></figure>
+          <div>
+            <p class="eyebrow">Bước 7</p>
+            <h2 id="history-title">Xem lại lịch sử tra cứu</h2>
+            <p class="lead">Chọn <strong>Lịch sử</strong> trên thanh điều hướng để tìm các hồ sơ đã tra cứu. Bạn có thể mở lại một lượt để xem kết quả chi tiết.</p>
+            <div class="card guide-card">
+              <div class="card-body">
+                <h3 class="card-title">Kết thúc một lượt làm việc</h3>
+                <p>Kiểm tra lại kết quả, lưu ý các hồ sơ cần bổ sung hoặc theo quy trình thẩm định, sau đó đăng xuất bằng menu tài khoản ở góc trên bên phải.</p>
+              </div>
+            </div>
+            <!-- <div role="alert" class="alert alert-info" style="margin-top: 1rem"><span>⌨</span><span>Di chuyển trong hướng dẫn: dùng nút điều hướng ở góc phải dưới, phím <kbd>←</kbd> <kbd>→</kbd>, hoặc cuộn trang.</span></div> -->
+          </div>
+        </div>
+        <footer class="slide-footer"><span>Đăng xuất khi kết thúc công việc</span><span class="slide-number">11 / 11</span></footer>
+      </section>
+    </main>
+
+    <!-- <nav class="guide-controls" aria-label="Điều hướng hướng dẫn">
+      <a class="btn btn-sm btn-ghost" id="prev" href="#slide-1" aria-label="Slide trước">←</a>
+      <a class="btn btn-sm btn-primary" id="next" href="#slide-2" aria-label="Slide tiếp theo">Tiếp →</a>
+    </nav> -->
+
+    <script>
+      (() => {
+        const slides = [...document.querySelectorAll('.slide')];
+        const previous = document.querySelector('#prev');
+        const next = document.querySelector('#next');
+        let current = 0;
+
+        function setCurrent(index) {
+          current = Math.max(0, Math.min(index, slides.length - 1));
+          if (!previous || !next) return;
+          previous.href = `#${slides[Math.max(0, current - 1)].id}`;
+          next.href = `#${slides[Math.min(slides.length - 1, current + 1)].id}`;
+          previous.classList.toggle('btn-disabled', current === 0);
+          previous.setAttribute('aria-disabled', String(current === 0));
+          next.classList.toggle('btn-disabled', current === slides.length - 1);
+          next.setAttribute('aria-disabled', String(current === slides.length - 1));
+          next.textContent = current === slides.length - 1 ? 'Hoàn tất' : 'Tiếp →';
+        }
+
+        new IntersectionObserver((entries) => {
+          const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (visible) setCurrent(slides.indexOf(visible.target));
+        }, { threshold: [.55, .75] }).observe(slides[0]);
+
+        const observer = new IntersectionObserver((entries) => {
+          const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (visible) setCurrent(slides.indexOf(visible.target));
+        }, { threshold: [.55, .75] });
+        slides.slice(1).forEach((slide) => observer.observe(slide));
+
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'ArrowRight' || event.key === 'PageDown') { event.preventDefault(); slides[Math.min(current + 1, slides.length - 1)].scrollIntoView({ behavior: 'smooth' }); }
+          if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); slides[Math.max(current - 1, 0)].scrollIntoView({ behavior: 'smooth' }); }
+          if (event.key === 'Home') { event.preventDefault(); slides[0].scrollIntoView({ behavior: 'smooth' }); }
+          if (event.key === 'End') { event.preventDefault(); slides[slides.length - 1].scrollIntoView({ behavior: 'smooth' }); }
+        });
+        setCurrent(0);
+      })();
+    </script>
+  </body>
+</html>

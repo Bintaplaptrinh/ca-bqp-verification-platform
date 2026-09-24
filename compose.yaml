@@ -5,47 +5,178 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-cabqp}
       POSTGRES_USER: ${POSTGRES_USER:-cabqp}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+    ports: ["5432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cabqp} -d ${POSTGRES_DB:-cabqp}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 20
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    ports: ["6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 20
 
-  backend:
-    build:
-      context: ./apps/backend
+  minio:
+    # Pinned: minio/minio:latest is no longer publicly pullable, and an unpinned
+    # object store version is not reproducible for a release gate anyway. Pulled from
+    # quay.io because Docker Hub now rejects anonymous pulls of minio/minio entirely.
+    image: quay.io/minio/minio:RELEASE.2025-02-28T09-55-16Z
+    command: server /data --console-address ":9001"
     environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-cabqp}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-change_me_minio}
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["minio_data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clamav:
+    image: clamav/clamav:stable
+    ports: ["3310:3310"]
+    volumes: ["clamav_data:/var/lib/clamav"]
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping=1 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+
+  migrate:
+    build: ./apps/backend
+    command: alembic upgrade head
+    environment: &backend-env
       APP_ENV: ${APP_ENV:-development}
-      BACKEND_HOST: ${BACKEND_HOST:-0.0.0.0}
-      BACKEND_PORT: ${BACKEND_PORT:-8000}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_DB: ${POSTGRES_DB:-cabqp}
-      POSTGRES_USER: ${POSTGRES_USER:-cabqp}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
-      REDIS_HOST: redis
-      REDIS_PORT: ${REDIS_PORT:-6379}
-    ports:
-      - "8000:8000"
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cabqp}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-cabqp}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-cabqp}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-change_me_minio}
+      RUNTIME_PROFILE: docker
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      ANTIMALWARE_ENABLED: "true"
+      ANTIMALWARE_REQUIRED: ${ANTIMALWARE_REQUIRED:-true}
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_FAIL_OPEN: ${RATE_LIMIT_FAIL_OPEN:-true}
+      RATE_LIMIT_IP_PER_MINUTE: ${RATE_LIMIT_IP_PER_MINUTE:-600}
+      RATE_LIMIT_AUTH_PER_MINUTE: ${RATE_LIMIT_AUTH_PER_MINUTE:-10}
+      # The web container proxies /api, so its address has to be trusted here or
+      # every user shares one rate-limit bucket (the proxy's). Compose assigns
+      # that address dynamically, so the default is the private ranges Docker
+      # allocates from. Narrow it to the proxy's real address, or to the WAF's,
+      # in any deployment where something untrusted can reach this port directly.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-172.16.0.0/12,192.168.0.0/16}
+      SECURITY_HEADERS_ENABLED: "true"
+      SINGLE_ACTIVE_SESSION: ${SINGLE_ACTIVE_SESSION:-true}
+      CORS_ORIGINS: http://localhost:3000
+      HF_HOME: /models
+      RESOLVER_CALIBRATION_PATH: /app/artifacts/resolver_calibration.json
+      # Only the seed job mounts /app/registry; elsewhere this path simply does not
+      # exist and seed.py falls through to the baseline shipped in the image.
+      REGISTRY_SEED_PATH: ${REGISTRY_SEED_PATH:-/app/registry/master_units_registry.csv}
+      OCR_DETECTOR: ${OCR_DETECTOR:-easyocr}
+      OCR_RECOGNIZER: ${OCR_RECOGNIZER:-easyocr}
+      OCR_FALLBACK_DETECTOR: ${OCR_FALLBACK_DETECTOR:-easyocr}
+      OCR_FALLBACK_RECOGNIZER: ${OCR_FALLBACK_RECOGNIZER:-vietocr}
+      OCR_FALLBACK_CONFIDENCE_MIN: ${OCR_FALLBACK_CONFIDENCE_MIN:-0.70}
     depends_on:
       postgres:
         condition: service_healthy
+
+  seed:
+    build: ./apps/backend
+    # Registry snapshot and policy metadata, then the two delivered accounts.
+    command: sh -c "python scripts/seed.py && python scripts/seed_accounts.py"
+    environment: *backend-env
+    # Curated registry lives outside the backend build context and is updated
+    # independently of the image, so it is mounted read-only instead of copied.
+    volumes:
+      - ./artifacts/registry/published:/app/registry:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  backend:
+    build: ./apps/backend
+    environment: *backend-env
+    ports: ["8000:8000"]
+    volumes: ["model_cache:/models"]
+    depends_on:
+      seed:
+        condition: service_completed_successfully
       redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  worker:
+    build: ./apps/backend
+    command: celery -A cabqp.workers.celery_app.celery_app worker -l INFO -Q documents,outbox,batch
+    environment: *backend-env
+    volumes: ["model_cache:/models"]
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A cabqp.workers.celery_app.celery_app inspect ping -d celery@$$HOSTNAME --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  beat:
+    build: ./apps/backend
+    command: celery -A cabqp.workers.celery_app.celery_app beat -l INFO
+    environment: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ./apps/web
+    ports: ["3000:80"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    depends_on:
+      backend:
         condition: service_healthy
 
 volumes:
   postgres_data:
+  minio_data:
+  clamav_data:
+  model_cache:

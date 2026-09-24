@@ -1,0 +1,17 @@
+HỒ SƠ KIỂM TRA - DỮ LIỆU GIẢ LẬP
+
+Họ và tên: Nguyễn Văn Một
+CCCD: 001082946111
+Chức vụ: Chuyên viên
+Nhóm đối tượng: BCA
+Đơn vị công tác: Cục Kỹ thuật
+Ngày đánh giá: 14/09/2026
+
+Họ và tên: Trần Thị Hai
+CCCD: 001082946222
+Chức vụ: Trưởng phòng
+Nhóm đối tượng: BQP
+Đơn vị công tác: Cục Chính trị
+Ngày đánh giá: 14/09/2026
+
+Ghi chú: Dữ liệu hoàn toàn giả lập để kiểm thử hệ thống - file có 2 người.

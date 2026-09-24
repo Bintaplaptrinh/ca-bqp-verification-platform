@@ -1,0 +1,109 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: light --default;
+}
+
+@theme {
+  --font-sans: "Inter", "Be Vietnam Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "Noto Serif", "Times New Roman", Times, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --color-gov-crimson: #881337;
+  --color-gov-darkred: #70102b;
+  --color-gov-red: #b91c1c;
+  --color-gov-lightred: #fef2f2;
+  --color-brand-red: #b91c1c;
+  --color-brand-darkred: #8a1010;
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-sans);
+    background-color: #ffffff;
+    color: #111111;
+    color-scheme: light;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  input[type="checkbox"], input[type="radio"] {
+    accent-color: #b91c1c;
+  }
+
+  .material-symbols-outlined {
+    font-family: "Material Symbols Outlined";
+    font-weight: normal;
+    font-style: normal;
+    font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+}
+
+/* Input focus ring used by the login and password forms. */
+.input-auth {
+  transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+.input-auth:focus-within {
+  border-color: #b91c1c;
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.15);
+}
+
+/* Top navigation tabs. */
+.nav-tab-active {
+  color: #dc2626;
+  border-bottom-color: #dc2626;
+  font-weight: 600;
+}
+.nav-tab-inactive {
+  color: #334155;
+  border-bottom-color: transparent;
+  font-weight: 500;
+}
+.nav-tab-inactive:hover {
+  color: #dc2626;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
+}
+
+/* Flat 3px corners across cards, inputs and buttons, as in the dev build. */
+.rounded-3xl, .rounded-2xl, .rounded-xl, .rounded-lg, .rounded-md, .rounded {
+  border-radius: 3px !important;
+}
+.rounded-t-3xl, .rounded-t-2xl, .rounded-t-xl, .rounded-t-lg, .rounded-t-md {
+  border-top-left-radius: 3px !important;
+  border-top-right-radius: 3px !important;
+}
+.rounded-b-3xl, .rounded-b-2xl, .rounded-b-xl, .rounded-b-lg, .rounded-b-md {
+  border-bottom-left-radius: 3px !important;
+  border-bottom-right-radius: 3px !important;
+}
+.rounded-full {
+  border-radius: 9999px !important;
+}
+
+@media print {
+  html, body, #root {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+}

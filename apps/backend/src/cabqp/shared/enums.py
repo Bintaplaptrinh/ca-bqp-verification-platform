@@ -1,0 +1,84 @@
+from enum import StrEnum
+
+
+class Role(StrEnum):
+    USER = "USER"
+    REVIEWER = "REVIEWER"
+    ADMIN = "ADMIN"
+
+class OrganizationType(StrEnum):
+    BCA = "BCA"
+    BQP = "BQP"
+    OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"
+
+class ResolutionStatus(StrEnum):
+    MATCHED = "MATCHED"
+    AMBIGUOUS = "AMBIGUOUS"
+    NOT_FOUND = "NOT_FOUND"
+    CONFLICT = "CONFLICT"
+
+class WorkflowStatus(StrEnum):
+    RECEIVED = "RECEIVED"
+    PROCESSING = "PROCESSING"
+    NEED_REVIEW = "NEED_REVIEW"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+class EligibilityStatus(StrEnum):
+    ELIGIBLE = "ELIGIBLE"
+    NOT_ELIGIBLE = "NOT_ELIGIBLE"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+class QAStatus(StrEnum):
+    PENDING_QA = "PENDING_QA"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+class ReviewStatus(StrEnum):
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+    DISMISSED = "DISMISSED"
+
+class SourceKind(StrEnum):
+    OFFICIAL = "OFFICIAL"
+    PROVIDED = "PROVIDED"
+    SYNTHETIC_DEMO = "SYNTHETIC_DEMO"
+
+
+class InputKind(StrEnum):
+    TEXT = "TEXT"
+    PDF_TEXT = "PDF_TEXT"
+    PDF_SCAN = "PDF_SCAN"
+    PDF_HYBRID = "PDF_HYBRID"
+    DOCX = "DOCX"
+    TABULAR_LIST = "TABULAR_LIST"
+    KEY_VALUE_SHEET = "KEY_VALUE_SHEET"
+    IMAGE = "IMAGE"
+
+class ParseMethod(StrEnum):
+    PLAIN_TEXT = "PLAIN_TEXT"
+    PDF_TEXT = "PDF_TEXT"
+    PDF_HYBRID = "PDF_HYBRID"
+    DOCX_TEXT = "DOCX_TEXT"
+    TABULAR_PROBE = "TABULAR_PROBE"
+    KEY_VALUE = "KEY_VALUE"
+    OCR = "OCR"
+    UNKNOWN = "UNKNOWN"
+
+class BulkJobStatus(StrEnum):
+    UPLOADED = "UPLOADED"
+    PROFILED = "PROFILED"
+    AWAITING_MAPPING = "AWAITING_MAPPING"
+    QUEUED = "QUEUED"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    COMPLETED_WITH_ERRORS = "COMPLETED_WITH_ERRORS"
+    FAILED = "FAILED"
+
+class BulkRowStatus(StrEnum):
+    PENDING = "PENDING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    SKIPPED_DUPLICATE = "SKIPPED_DUPLICATE"

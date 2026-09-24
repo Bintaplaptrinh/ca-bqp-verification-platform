@@ -1,0 +1,7 @@
+# Files executed inside Linux containers or by a shell must keep LF endings regardless
+# of the checking-out platform's core.autocrlf setting. A CRLF-mangled shebang or shell
+# script fails silently or with a confusing "command not found".
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
